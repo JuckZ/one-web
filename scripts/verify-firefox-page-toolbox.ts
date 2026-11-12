@@ -888,7 +888,68 @@ async function runFirefoxScenario(
   ].join(''), [protectedIds])
   assert(JSON.stringify(sendProtectedAfter) === JSON.stringify(sendProtectedBefore), 'Firefox Send to OpenList changed protected module records')
   assert(sendRequests.me === 1 && sendRequests.tools === 1 && sendRequests.add === 1 && sendRequests.undone === 1 && sendRequests.unauthorized === 0, `Firefox fixed connector requests are invalid: ${JSON.stringify(sendRequests)}`)
-  process.stdout.write('Firefox packaged-builtin gates: 2/2 passed (Page Toolbox isolation + Send to OpenList fixed connector/discovery/lifecycle)\n')
+  await runCookieManagerFirefoxScenario(client, driverHandle)
+  process.stdout.write('Firefox packaged-builtin gates: 3/3 passed (Page Toolbox + Send to OpenList + Cookie Manager CRUD/partition/JSON/revocation/isolation)\n')
+}
+
+async function runCookieManagerFirefoxScenario(client: MarionetteClient, driverHandle: string) {
+  await switchWindow(client, driverHandle)
+  await execute(client, 'document.querySelector(\'[data-module-id="dev.oneweb.cookie-manager"] [data-testid="module-toggle"]\').click();return true')
+  await waitForPage(client, 'document.querySelector("[data-testid=cookie-manager]")', 'Firefox Cookie Manager entry')
+  // Test-only permission bootstrap in the isolated temporary Firefox profile.
+  await setContext(client, 'chrome')
+  const grant = asRecord(await executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    '(async()=>{',
+    'const {ExtensionPermissions}=ChromeUtils.importESModule("resource://gre/modules/ExtensionPermissions.sys.mjs");',
+    `const policy=WebExtensionPolicy.getByID(${JSON.stringify(EXTENSION_ID)});`,
+    'await ExtensionPermissions.add(policy.id,{permissions:["cookies"],origins:["http://*/*","https://*/*"]},policy.extension);',
+    'return {ok:true};',
+    '})().then(done,error=>done({ok:false,error:String(error)}));',
+  ].join('')), 'Firefox Cookie permission bootstrap')
+  assert(grant.ok === true, 'Firefox Cookie permission bootstrap failed')
+  await setContext(client, 'content')
+  const result = asRecord(await executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    '(async()=>{',
+    'const check=(condition,label)=>{if(!condition)throw new Error(label);};',
+    'const baseline=JSON.stringify(await browser.storage.local.get(null));',
+    'const send=async(type,fields={})=>{const response=await browser.runtime.sendMessage({channel:"oneweb.cookie-manager",version:1,type,...fields});return response?.result;};',
+    'await browser.cookies.set({url:"https://cookie.example/",name:"firefox-session",value:"synthetic-firefox-cookie",secure:true,httpOnly:true,sameSite:"lax"});',
+    'await browser.cookies.set({url:"https://cookie.example/",name:"firefox-partition",value:"synthetic-partition-cookie",secure:true,sameSite:"no_restriction",partitionKey:{topLevelSite:"https://top.example"}});',
+    'await browser.cookies.set({url:"http://http.cookie.example/",name:"firefox-http-partition",value:"synthetic-http-partition-cookie",secure:false,sameSite:"lax",partitionKey:{topLevelSite:"https://top.example"}});',
+    'const preparation=await send("prepare",{scope:"all"});check(preparation?.ok,"prepare");',
+    'let opened=await send("open",{token:preparation.value.token});check(opened?.ok,"open");',
+    'let snapshot=opened.value;',
+    'const session=snapshot.entries.find(entry=>entry.cookie.name==="firefox-session");',
+    'const partition=snapshot.entries.find(entry=>entry.cookie.name==="firefox-partition");',
+    'const httpPartition=snapshot.entries.find(entry=>entry.cookie.name==="firefox-http-partition");check(httpPartition?.cookie.secure===false&&httpPartition.cookie.partitionKey?.topLevelSite==="https://top.example","Firefox HTTP partition");',
+    'check(session?.cookie.httpOnly&&session.cookie.storeId==="firefox-default","HttpOnly/store");',
+    'check(partition?.cookie.partitionKey?.topLevelSite==="https://top.example","partition identity");',
+    'const edited=await send("save",{snapshotId:snapshot.id,entryId:session.id,cookie:{...session.cookie,value:"edited-firefox-cookie"}});check(edited?.ok,`edit: ${JSON.stringify(edited)}`);',
+    'opened=await send("refresh",{snapshotId:snapshot.id});check(opened?.ok,"refresh");snapshot=opened.value;',
+    'const entry=snapshot.entries.find(item=>item.cookie.name==="firefox-session");',
+    'const exported=await send("export",{snapshotId:snapshot.id,entryIds:[entry.id]});check(exported?.ok,"export");',
+    'check(JSON.parse(exported.value)[0].value==="edited-firefox-cookie","export content");',
+    'const removed=await send("delete",{snapshotId:snapshot.id,entryIds:[entry.id]});check(removed?.ok&&removed.value[0].ok,"delete");',
+    'check(!await browser.cookies.get({url:"https://cookie.example/",name:"firefox-session"}),"browser deletion");',
+    'opened=await send("refresh",{snapshotId:snapshot.id});check(opened?.ok,"refresh after delete");snapshot=opened.value;',
+    'const preview=await send("preview",{snapshotId:snapshot.id,text:exported.value,storeId:session.cookie.storeId});check(preview?.ok,"preview");',
+    'check(!await browser.cookies.get({url:"https://cookie.example/",name:"firefox-session"}),"preview zero writes");',
+    'const imported=await send("import",{snapshotId:snapshot.id,previewId:preview.value.id,entryIds:[preview.value.entries[0].id]});check(imported?.ok&&imported.value[0].ok,"import");',
+    'check((await browser.cookies.get({url:"https://cookie.example/",name:"firefox-session"}))?.value==="edited-firefox-cookie","JSON round trip");',
+    'opened=await send("refresh",{snapshotId:snapshot.id});check(opened?.ok,"partition refresh");snapshot=opened.value;',
+    'const partitionEntry=snapshot.entries.find(item=>item.cookie.name==="firefox-partition");',
+    'const partitionRemoved=await send("delete",{snapshotId:snapshot.id,entryIds:[partitionEntry.id]});check(partitionRemoved?.ok&&partitionRemoved.value[0].ok,`partition delete: ${JSON.stringify(partitionRemoved)}`);',
+    'check((await browser.cookies.get({url:"https://cookie.example/",name:"firefox-session"}))?.value==="edited-firefox-cookie","peer isolation");',
+    'check(JSON.stringify(await browser.storage.local.get(null))===baseline,"storage isolation");',
+    'await browser.permissions.remove({permissions:["cookies"]});',
+    'const revoked=await send("export",{snapshotId:snapshot.id,entryIds:[partitionEntry.id]});',
+    'check(revoked?.ok===false&&["permission-required","lifecycle-cancelled"].includes(revoked.reason),"revocation");',
+    'return {ok:true};',
+    '})().then(done,error=>done({ok:false,error:String(error)}));',
+  ].join('')), 'Firefox Cookie Manager public-protocol gate')
+  assert(result.ok === true, `Firefox Cookie Manager failed: ${String(result.error)}`)
 }
 
 async function main() {
@@ -926,7 +987,9 @@ async function main() {
     ], {
       cwd: projectDir,
       detached: true,
-      env: { ...process.env, NO_COLOR: '1' },
+      // Firefox 160 reads this environment variable for privileged automation;
+      // the older --remote-allow-system-access argument alone is insufficient.
+      env: { ...process.env, NO_COLOR: '1', MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     const rdpPort = await waitForRdpPort(child, log)

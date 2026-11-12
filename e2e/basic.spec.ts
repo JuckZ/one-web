@@ -131,7 +131,7 @@ test('built artifact exposes a least-privilege RepoLens side panel', async ({ ex
   expect(extensionId).toMatch(/^[a-p]{32}$/)
   expect(manifest.side_panel.default_path).toBe('dist/sidebar/index.html')
   expect(manifest.permissions).toEqual(['activeTab', 'contextMenus', 'scripting', 'storage', 'tabs', 'sidePanel'])
-  expect(manifest.optional_permissions).toEqual(['bookmarks'])
+  expect(manifest.optional_permissions).toEqual(['bookmarks', 'cookies'])
   expect(manifest.optional_host_permissions).toEqual(['https://*/*', 'http://*/*'])
   expect(manifest.host_permissions).toEqual(['https://github.com/*', 'http://127.0.0.1:4747/*'])
   expect(manifest.content_scripts[0].matches).toEqual(['https://github.com/*'])

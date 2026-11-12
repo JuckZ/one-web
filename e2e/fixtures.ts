@@ -34,6 +34,7 @@ const sdkRuntimeFiles = new Set([
 export const extensionPath = process.env.EXTENSION_PATH || path.join(currentDir, '../artifacts/chromium')
 
 interface ExtensionFixtures {
+  cookieManagerAccess: boolean
   alistFixture: OpenListFixture
   bookmarkProbeFixture: BookmarkProbeFixture
   clashControllerFixture: ClashControllerFixture
@@ -929,7 +930,8 @@ async function startOpenListFixture(kind: OpenListFixture['kind'] = 'openlist') 
 }
 
 export const test = base.extend<ExtensionFixtures>({
-  context: async ({ alistFixture, bookmarkProbeFixture, clashControllerFixture, headless, moduleFixtures, openListFixture }, use) => {
+  cookieManagerAccess: [false, { option: true }],
+  context: async ({ alistFixture, bookmarkProbeFixture, clashControllerFixture, cookieManagerAccess, headless, moduleFixtures, openListFixture }, use) => {
     const closeRepoLensFixture = await startRepoLensFixture(moduleFixtures)
     const profileDir = await fs.mkdtemp(path.join(os.tmpdir(), 'oneweb-e2e-'))
     const launchOptions = {
@@ -960,6 +962,8 @@ export const test = base.extend<ExtensionFixtures>({
     fixtureOrigins.push(`${clashControllerFixture.origin}/*`)
     fixtureOrigins.push(`${openListFixture.origin}/*`)
     fixtureOrigins.push(`${alistFixture.origin}/*`)
+    if (cookieManagerAccess)
+      fixtureOrigins.push('http://*/*', 'https://*/*')
     for (const key of ['active_permissions', 'granted_permissions']) {
       const origins = extensionSettings[key].explicit_host as string[]
       for (const fixtureOrigin of fixtureOrigins) {
@@ -969,6 +973,8 @@ export const test = base.extend<ExtensionFixtures>({
       const api = extensionSettings[key].api as string[]
       if (!api.includes('bookmarks'))
         api.push('bookmarks')
+      if (cookieManagerAccess && !api.includes('cookies'))
+        api.push('cookies')
     }
     await fs.writeJson(preferencesPath, preferences)
 

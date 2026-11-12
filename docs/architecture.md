@@ -26,6 +26,27 @@ Chromium artifacts use `side_panel`; Firefox artifacts remove that key and add `
 The build defines `__FIREFOX__` so Chromium-only APIs are removed from the Firefox bundle rather
 than merely guarded at runtime. Firefox packages must pass `web-ext lint --warnings-as-errors`.
 
+## Packaged Cookie Manager
+
+`src/modules/builtin/cookie-manager/` owns the native cookie boundary, in-memory session authority,
+strict plain-JSON codec and finite runtime protocol. Only trusted packaged management pages can
+use it; no Cookie capability is added to remote modules. The seed is disabled and the manifest
+declares `cookies` as optional. Permission requests originate directly in a user click handler.
+
+`src/sidebar/cookie-manager-view.ts` contains the independent management UI; the existing module
+manager only mounts it and forwards lifecycle events. The controller enumerates each accessible
+Store and preserves raw domain/path/name/hostOnly and complete partition identities. Writes are
+serialized, recheck permissions and compare current browser state against the reviewed snapshot.
+Deletion also verifies the exact target selected by the native URL/name API before removing it.
+Browser APIs offer no atomic compare-and-swap, so website changes between verification and mutation
+remain possible.
+
+Snapshot/preparation authority is limited to eight sessions and ten minutes. Disable, revocation,
+close or expiry cancels pending authority. Cookie values never persist to extension storage and
+leave the extension only through explicit clipboard or plaintext JSON download actions. Active
+scope overlap is registered with the existing shared-origin coordinator. The behavior and public
+test boundaries are specified in [Cookie Manager SDD](specs/cookie-manager.md).
+
 ## Target stack
 
 - **Manifest V3 first**, with Firefox compatibility isolated behind manifest generation branches.

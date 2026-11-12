@@ -1,3 +1,4 @@
+import type { CookieManagerViewOptions } from './cookie-manager-view'
 import type {
   BookmarkDoctorWorkspaceState,
   BookmarkRepairConfirmation,
@@ -39,6 +40,7 @@ import {
   ClashControlClientError,
 } from '~/modules/builtin/clash-control'
 import type { ClashControlResult } from '~/modules/builtin/clash-control/protocol'
+import { COOKIE_MANAGER_ENTRY_ID, COOKIE_MANAGER_MODULE_ID } from '~/modules/builtin/cookie-manager/contracts'
 import type {
   PageToolboxManagementResult,
   PageToolboxSitePreparationV1,
@@ -98,6 +100,7 @@ import {
   presentClashProxyGroupChoices,
   presentClashProxySwitchReview,
 } from './clash-control-presentation'
+import { CookieManagerView } from './cookie-manager-view'
 import {
   presentModuleAccess,
   presentRequestedModuleAccess,
@@ -220,6 +223,7 @@ export interface ModuleManagementViewOptions {
   clashControl?: ClashControlActions
   pageToolbox?: PageToolboxActions
   sendToOpenList?: SendToOpenListActions
+  cookieManager?: CookieManagerViewOptions
   now?: () => string
   onRecordChanged?: (_record: InstalledModuleRecord) => void
   onRecordRemoved?: (_record: InstalledModuleRecord) => void
@@ -319,6 +323,8 @@ function readSendActionResult<Value>(input: unknown): SendActionResult<Value> | 
 }
 
 export class ModuleManagementView {
+  private readonly cookieManager?: CookieManagerViewOptions
+  private cookieView: CookieManagerView | null = null
   private readonly client: ModuleManagementActions
   private readonly browserJournal?: BrowserJournalActions
   private readonly bookmarkDoctor?: BookmarkDoctorActions
@@ -400,7 +406,8 @@ export class ModuleManagementView {
   private sendMessage: { message: string, error: boolean } | null = null
   private sendBusy = false
 
-  constructor({ root, client, browserJournal, bookmarkDoctor, clashControl, pageToolbox, sendToOpenList, now = () => new Date().toISOString(), onRecordChanged, onRecordRemoved, onRecordInstalled }: ModuleManagementViewOptions) {
+  constructor({ root, client, browserJournal, bookmarkDoctor, clashControl, pageToolbox, sendToOpenList, cookieManager, now = () => new Date().toISOString(), onRecordChanged, onRecordRemoved, onRecordInstalled }: ModuleManagementViewOptions) {
+    this.cookieManager = cookieManager
     this.client = client
     this.browserJournal = browserJournal
     this.bookmarkDoctor = bookmarkDoctor
@@ -667,6 +674,10 @@ export class ModuleManagementView {
   }
 
   private render() {
+    if (!this.records.some(record => record.manifest.id === COOKIE_MANAGER_MODULE_ID && record.enabled)) {
+      this.cookieView?.destroy()
+      this.cookieView = null
+    }
     const fragment = document.createDocumentFragment()
     if (!this.records.length) {
       fragment.append(element('p', 'module-list-empty', '尚未安装模块'))
@@ -739,10 +750,27 @@ export class ModuleManagementView {
       card.append(this.renderPageToolboxSection())
     if (record.manifest.runtime === 'builtin' && record.manifest.entry_id === SEND_TO_OPENLIST_ENTRY_ID)
       card.append(this.renderSendToOpenListSection(record))
+    if (record.manifest.runtime === 'builtin' && record.manifest.entry_id === COOKIE_MANAGER_ENTRY_ID) {
+      if (record.enabled && this.cookieManager) {
+        this.cookieView ??= new CookieManagerView(element('section', ''), this.cookieManager)
+        card.append(this.cookieView.root)
+      }
+      else {
+        card.append(element('p', '', '启用后可管理 Cookie，首次读取时按所选范围申请权限。'))
+      }
+    }
     if (isRemotelyUpdateable(record))
       card.append(this.renderUpdateSection(record))
     card.append(footer)
     return card
+  }
+
+  clearCookieSession() {
+    this.cookieView?.reset()
+  }
+
+  clearCurrentCookieSession() {
+    this.cookieView?.resetCurrentSite()
   }
 
   private sendActionButton(action: string, label: string, disabled = this.sendBusy) {

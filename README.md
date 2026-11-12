@@ -49,6 +49,24 @@ Firefox uses the stable add-on ID `one-web@juckz.local`; its temporary local
 `moz-extension://<uuid>` must also be added to RepoLens `EXTENSION_ORIGINS` for local testing.
 The packaged XPI is `extension.xpi` and the unpacked files are preserved in `artifacts/firefox/`.
 
+## Cookie Manager
+
+Open OneWeb → manage modules → enable **Cookie Manager** (disabled by default). Choose the current
+HTTP(S) site or all websites, then use **授权并读取** to grant optional Cookie/host access.
+The packaged panel groups cookies by domain, filters by name/domain and Store, and supports
+create/edit, copy value, reviewed deletion and selected JSON export/import. Values stay hidden
+until explicitly viewed, copied or exported. Existing cookie identities stay fixed during editing.
+
+JSON files contain plaintext cookie values. Import requires selecting a real destination Store,
+previewing the records and choosing which ones to write. The format is OneWeb's own plain cookie
+array; third-party encrypted backups and historical formats are outside this feature.
+
+Cookie values stay in transient packaged-page/background memory and explicitly downloaded files.
+They are never sent to RepoLens or other modules, persisted to extension storage or logged.
+Closing the manager, hiding the page or disabling the module clears the session; shared browser
+permissions remain available to other modules. See the
+[specification](docs/specs/cookie-manager.md) and [reference audit](docs/research/cookie-editor-reference.md).
+
 ## Verification
 
 ```bash
@@ -87,6 +105,7 @@ RepoLens /embed
 - The manifest grants only `activeTab`, `scripting`, `storage`, `tabs`, and Chromium `sidePanel`,
   plus exact GitHub and RepoLens host permissions. `scripting` remains gated by explicit Page
   Toolbox exact-origin permission and a fixed packaged entry.
+- `cookies` is optional and requested only through Cookie Manager's explicit authorization action.
 - The initial RepoLens handshake checks exact `event.origin`, `event.source`, module ID and protocol
   version; later messages use the transferred port and still require the module ID and nonce.
 - Production uses HTTPS, explicit extension origins, `AUTH_MODE=session`, a one-time authorization

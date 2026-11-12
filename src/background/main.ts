@@ -23,6 +23,10 @@ import {
   createClashControlResponse,
   isClashControlRequest,
 } from '~/modules/builtin/clash-control'
+import type { CookieBrowserBoundary } from '~/modules/builtin/cookie-manager/contracts'
+import { COOKIE_MANAGER_MODULE_ID } from '~/modules/builtin/cookie-manager/contracts'
+import { CookieManagerController } from '~/modules/builtin/cookie-manager/controller'
+import { handleCookieManagerMessage } from '~/modules/builtin/cookie-manager/protocol'
 import { BuiltinExactOriginUsageCoordinator } from '~/modules/builtin/origin-usage'
 import {
   createPageToolboxInjectionAdapter,
@@ -81,6 +85,19 @@ const browserJournalController = new BrowserJournalController({
   events: createBrowserJournalTabEventSource(browser.tabs),
   archive: createBrowserJournalArchiveStore(browser.storage.local),
 })
+const cookieManagerController = new CookieManagerController({
+  registry: defaultModuleRegistry,
+  permissions: browser.permissions,
+  tabs: browser.tabs,
+  firefox: __FIREFOX__,
+  cookies: {
+    getAllCookieStores: () => (browser.cookies as unknown as CookieBrowserBoundary).getAllCookieStores(),
+    getAll: details => (browser.cookies as unknown as CookieBrowserBoundary).getAll(details),
+    get: details => (browser.cookies as unknown as CookieBrowserBoundary).get(details),
+    set: details => (browser.cookies as unknown as CookieBrowserBoundary).set(details),
+    remove: details => (browser.cookies as unknown as CookieBrowserBoundary).remove(details),
+  },
+})
 const bookmarkDoctorController = new BookmarkDoctorController({
   registry: defaultModuleRegistry,
   permissions: browser.permissions,
@@ -131,11 +148,14 @@ builtinOriginUsage.register('bookmark-doctor', originPattern => bookmarkDoctorCo
 builtinOriginUsage.register('clash-control', originPattern => clashControlController.usesOriginPattern(originPattern))
 builtinOriginUsage.register('page-toolbox', originPattern => pageToolboxController.usesOriginPattern(originPattern))
 builtinOriginUsage.register('send-to-openlist', originPattern => sendToOpenListController.usesOriginPattern(originPattern))
+builtinOriginUsage.register('cookie-manager', originPattern => cookieManagerController.usesOriginPattern(originPattern))
 bookmarkDoctorController.setOriginInUse(
   originPattern => builtinOriginUsage.usedByAnother('bookmark-doctor', originPattern),
 )
 const moduleManager = new ModuleManager(defaultModuleRegistry, moduleInstaller, {
   onInstalledRecordChanged: async (record) => {
+    if (record.manifest.id === COOKIE_MANAGER_MODULE_ID)
+      cookieManagerController.invalidate()
     await storageModuleAdapter.handleInstalledRecordChanged(record.manifest.id)
     browserJournalController.handleInstalledRecordChanged(record)
     bookmarkDoctorController.handleInstalledRecordChanged(record)
@@ -186,6 +206,15 @@ async function updateTabContext(tabId: number, href: string | undefined) {
 }
 
 browser.runtime.onMessage.addListener((message: unknown, sender: Runtime.MessageSender) => {
+  const cookieResponse = handleCookieManagerMessage(
+    cookieManagerController,
+    message,
+    sender,
+    browser.runtime.id,
+    extensionBaseUrl,
+  )
+  if (cookieResponse)
+    return cookieResponse
   if (isSendToOpenListRequest(message)) {
     if (!isTrustedModuleManagementSender(sender, browser.runtime.id, extensionBaseUrl))
       return undefined
@@ -547,6 +576,8 @@ browser.tabs.onRemoved.addListener((tabId) => {
 })
 
 browser.permissions.onRemoved.addListener((permissions) => {
+  if (permissions.permissions?.includes('cookies') || permissions.origins?.length)
+    cookieManagerController.invalidate()
   browserJournalController.handlePermissionsRemoved(permissions)
   void bookmarkDoctorController.handlePermissionsRemoved(permissions)
   void clashControlController.handlePermissionsRemoved(permissions)

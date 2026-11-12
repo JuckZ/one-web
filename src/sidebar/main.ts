@@ -4,6 +4,7 @@ import browser from 'webextension-polyfill'
 import { BookmarkDoctorClient } from '~/modules/builtin/bookmark-doctor'
 import { BrowserJournalClient } from '~/modules/builtin/browser-journal'
 import { ClashControlClient } from '~/modules/builtin/clash-control'
+import { CookieManagerClient } from '~/modules/builtin/cookie-manager/protocol'
 import { PageToolboxClient } from '~/modules/builtin/page-toolbox'
 import { SendToOpenListClient } from '~/modules/builtin/send-to-openlist'
 import { type ContextSnapshot, createDefaultContextBroker } from '~/modules/context-broker'
@@ -19,6 +20,7 @@ import type { InstalledModuleRecord } from '~/modules/types'
 import { resolveRepoLensInitFields } from '~/repolens/authorization'
 import { ModuleManagementView } from './module-management-view'
 import './sidebar.css'
+import './cookie-manager.css'
 
 const REPOLENS_MODULE_ID = 'dev.juck.repolens'
 const frame = document.querySelector<HTMLIFrameElement>('[data-testid="oneweb-module-frame"]')!
@@ -43,6 +45,9 @@ const managementClient = new ModuleManagementClient({
   permissions: browser.permissions,
 })
 const browserJournalClient = new BrowserJournalClient({
+  sendMessage: message => browser.runtime.sendMessage(message),
+})
+const cookieManagerClient = new CookieManagerClient({
   sendMessage: message => browser.runtime.sendMessage(message),
 })
 const bookmarkDoctorClient = new BookmarkDoctorClient({
@@ -197,6 +202,7 @@ function openModuleManager() {
 }
 
 function closeModuleManager() {
+  managementView.clearCookieSession()
   shell.dataset.view = 'module'
   managerSurface.hidden = true
   moduleSurface.hidden = false
@@ -211,6 +217,11 @@ managementView = new ModuleManagementView({
   clashControl: clashControlClient,
   pageToolbox: pageToolboxClient,
   sendToOpenList: sendToOpenListClient,
+  cookieManager: {
+    client: cookieManagerClient,
+    permissions: browser.permissions,
+    firefox: __FIREFOX__,
+  },
   onRecordChanged: (record) => {
     if (record.manifest.id === activeRecord?.manifest.id)
       activateModule(record)
@@ -222,8 +233,23 @@ managementView = new ModuleManagementView({
 })
 
 browser.permissions.onRemoved.addListener((permissions) => {
+  if (permissions.permissions?.includes('cookies') || permissions.origins?.length)
+    managementView.clearCookieSession()
   if (permissions.permissions?.includes('bookmarks') || permissions.origins?.length)
     void managementView.refresh()
+})
+
+browser.tabs.onActivated.addListener(() => managementView.clearCurrentCookieSession())
+browser.tabs.onUpdated.addListener((_tabId, change) => {
+  if (change.url)
+    managementView.clearCurrentCookieSession()
+})
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes['oneweb.modules.v1'])
+    return
+  const records: unknown = changes['oneweb.modules.v1'].newValue
+  if (Array.isArray(records) && records.some(record => record?.manifest?.id === 'dev.oneweb.cookie-manager' && !record.enabled))
+    managementView.clearCookieSession()
 })
 
 manageButton.addEventListener('click', () => managerSurface.hidden ? openModuleManager() : closeModuleManager())

@@ -2,6 +2,7 @@ import browser from 'webextension-polyfill'
 import { createBookmarkDoctorSeed } from './builtin/bookmark-doctor/manifest'
 import { createBrowserJournalSeed } from './builtin/browser-journal/manifest'
 import { createClashControlSeed } from './builtin/clash-control/manifest'
+import { createCookieManagerSeed } from './builtin/cookie-manager/manifest'
 import { createPageToolboxSeed } from './builtin/page-toolbox/manifest'
 import { createSendToOpenListSeed } from './builtin/send-to-openlist/manifest'
 import { ModuleRegistry } from './registry'
@@ -16,6 +17,7 @@ export const defaultModuleRegistry = new ModuleRegistry({
     createBrowserJournalSeed(),
     createPageToolboxSeed(),
     createSendToOpenListSeed(),
+    createCookieManagerSeed(),
   ],
 })
 

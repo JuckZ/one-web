@@ -1,0 +1,106 @@
+.cookie-manager {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent, #6d5dfc) 25%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface, #fff) 96%, var(--accent, #6d5dfc) 4%);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.cookie-manager h3,
+.cookie-manager h4,
+.cookie-manager p {
+  margin: 0;
+}
+
+.cookie-manager h4 {
+  margin-top: 12px;
+  color: var(--muted, #667085);
+  font-size: 0.78rem;
+}
+
+.cookie-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.cookie-manager input:not([type='checkbox']),
+.cookie-manager select,
+.cookie-manager textarea {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 7px;
+  background: var(--surface, #fff);
+  color: inherit;
+  font: inherit;
+}
+
+.cookie-manager input[type='search'] {
+  flex: 1 1 160px;
+}
+
+.cookie-row,
+.cookie-review,
+.cookie-editor,
+.cookie-import {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+}
+
+.cookie-review {
+  border-color: color-mix(in srgb, #b45309 45%, transparent);
+}
+
+.cookie-row label,
+.cookie-import [data-cookie-preview] {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.cookie-row small {
+  color: var(--muted, #667085);
+  overflow-wrap: anywhere;
+}
+
+.cookie-editor label,
+.cookie-import > label:not([data-cookie-preview]) {
+  display: grid;
+  gap: 4px;
+}
+
+.cookie-editor label:has(input[type='checkbox']) {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.cookie-manager textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: monospace;
+}
+
+.cookie-manager button:focus-visible,
+.cookie-manager input:focus-visible,
+.cookie-manager select:focus-visible,
+.cookie-manager textarea:focus-visible {
+  outline: 2px solid var(--accent, #6d5dfc);
+  outline-offset: 2px;
+}

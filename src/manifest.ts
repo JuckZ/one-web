@@ -50,7 +50,7 @@ export async function getManifest() {
       'tabs',
       ...(isFirefox ? [] : ['sidePanel']),
     ],
-    optional_permissions: ['bookmarks'],
+    optional_permissions: ['bookmarks', 'cookies'],
     host_permissions: [
       'https://github.com/*',
       `${repolensOrigin}/*`,
