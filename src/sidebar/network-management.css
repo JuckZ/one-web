@@ -1,0 +1,68 @@
+.network-management {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent, #6d5dfc) 25%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface, #fff) 96%, var(--accent, #6d5dfc) 4%);
+  color: inherit;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.network-management h3,
+.network-management p {
+  margin: 0;
+}
+
+.network-policy-label {
+  display: grid;
+  gap: 4px;
+}
+
+.network-management select {
+  min-width: 0;
+  max-width: 100%;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 7px;
+  background: var(--surface, #fff);
+  color: inherit;
+  font: inherit;
+}
+
+.network-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.network-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.network-management select:focus-visible,
+.network-management input:focus-visible,
+.network-management button:focus-visible {
+  outline: 2px solid var(--accent, #6d5dfc);
+  outline-offset: 2px;
+}
+
+.network-management [data-testid='network-message'][data-state='error'] {
+  color: var(--danger, #b42318);
+}
+
+.network-management input[type='checkbox'] {
+  accent-color: var(--accent, #6d5dfc);
+}
+
+.network-management [data-testid='network-status'] {
+  padding: 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, currentColor 5%, transparent);
+}

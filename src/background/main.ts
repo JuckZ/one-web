@@ -27,6 +27,8 @@ import type { CookieBrowserBoundary } from '~/modules/builtin/cookie-manager/con
 import { COOKIE_MANAGER_MODULE_ID } from '~/modules/builtin/cookie-manager/contracts'
 import { CookieManagerController } from '~/modules/builtin/cookie-manager/controller'
 import { handleCookieManagerMessage } from '~/modules/builtin/cookie-manager/protocol'
+import { type NetworkControllerOptions, NetworkManagementController } from '~/modules/builtin/network-management/controller'
+import { handleNetworkManagementMessage } from '~/modules/builtin/network-management/protocol'
 import { BuiltinExactOriginUsageCoordinator } from '~/modules/builtin/origin-usage'
 import {
   createPageToolboxInjectionAdapter,
@@ -63,6 +65,7 @@ import { ModuleManager } from '~/modules/manager'
 import { StorageModuleAdapter } from '~/modules/storage-module-adapter'
 import { StorageModuleController } from '~/modules/storage-module-controller'
 import { validateStorageModuleProtocolRequest } from '~/modules/storage-module-protocol'
+import { getNetworkPrivacy } from './network-privacy'
 
 const contextBroker = createDefaultContextBroker()
 const builtinOriginUsage = new BuiltinExactOriginUsageCoordinator()
@@ -118,6 +121,15 @@ const clashControlController = new ClashControlController({
   profileStore: createClashControllerProfileStore(browser.storage.local),
   originInUse: originPattern => builtinOriginUsage.usedByAnother('clash-control', originPattern),
 })
+const networkManagementController = new NetworkManagementController({
+  registry: defaultModuleRegistry,
+  permissions: browser.permissions,
+  storage: browser.storage.local,
+  get privacy() {
+    return getNetworkPrivacy()
+  },
+  scripting: browser.scripting as unknown as NetworkControllerOptions['scripting'],
+})
 const pageToolboxController = new PageToolboxController({
   registry: defaultModuleRegistry,
   permissions: browser.permissions,
@@ -146,6 +158,7 @@ const sendToOpenListContextMenus = new SendToOpenListContextMenuController(
 )
 builtinOriginUsage.register('bookmark-doctor', originPattern => bookmarkDoctorController.usesOriginPattern(originPattern))
 builtinOriginUsage.register('clash-control', originPattern => clashControlController.usesOriginPattern(originPattern))
+builtinOriginUsage.register('network-management', originPattern => networkManagementController.usesOriginPattern(originPattern))
 builtinOriginUsage.register('page-toolbox', originPattern => pageToolboxController.usesOriginPattern(originPattern))
 builtinOriginUsage.register('send-to-openlist', originPattern => sendToOpenListController.usesOriginPattern(originPattern))
 builtinOriginUsage.register('cookie-manager', originPattern => cookieManagerController.usesOriginPattern(originPattern))
@@ -160,6 +173,9 @@ const moduleManager = new ModuleManager(defaultModuleRegistry, moduleInstaller, 
     browserJournalController.handleInstalledRecordChanged(record)
     bookmarkDoctorController.handleInstalledRecordChanged(record)
     await clashControlController.handleInstalledRecordChanged(record)
+    const networkLifecycle = await networkManagementController.handleInstalledRecordChanged(record)
+    if (networkLifecycle && !networkLifecycle.ok)
+      throw new Error('network-cleanup-failed')
     pageToolboxController.handleInstalledRecordChanged(record)
     await sendToOpenListController.handleInstalledRecordChanged(record)
     sendToOpenListDiscovery.handleInstalledRecordChanged(record)
@@ -175,6 +191,7 @@ void initializeDefaultModuleRegistry()
     await Promise.all([
       browserJournalController.startup(),
       clashControlController.startup(),
+      networkManagementController.startup(),
       pageToolboxController.startup(),
       sendToOpenListController.startup(),
       sendToOpenListContextMenus.initialize(Boolean(sendRecord?.enabled)),
@@ -206,6 +223,9 @@ async function updateTabContext(tabId: number, href: string | undefined) {
 }
 
 browser.runtime.onMessage.addListener((message: unknown, sender: Runtime.MessageSender) => {
+  const networkResponse = handleNetworkManagementMessage(networkManagementController, message, sender, browser.runtime.id, extensionBaseUrl)
+  if (networkResponse)
+    return networkResponse
   const cookieResponse = handleCookieManagerMessage(
     cookieManagerController,
     message,
@@ -581,6 +601,7 @@ browser.permissions.onRemoved.addListener((permissions) => {
   browserJournalController.handlePermissionsRemoved(permissions)
   void bookmarkDoctorController.handlePermissionsRemoved(permissions)
   void clashControlController.handlePermissionsRemoved(permissions)
+  void networkManagementController.handlePermissionsRemoved(permissions)
   void pageToolboxController.handlePermissionsRemoved(permissions)
   void sendToOpenListController.handlePermissionsRemoved(permissions)
 })

@@ -110,6 +110,7 @@ import {
   isRemotelyUpdateable,
   presentModuleUpdate,
 } from './module-update-presentation'
+import { NetworkManagementView, type NetworkManagementViewOptions } from './network-management-view'
 import {
   createPageToolboxControlState,
   type PageToolboxControlState,
@@ -221,6 +222,7 @@ export interface ModuleManagementViewOptions {
   browserJournal?: BrowserJournalActions
   bookmarkDoctor?: BookmarkDoctorActions
   clashControl?: ClashControlActions
+  networkManagement?: NetworkManagementViewOptions
   pageToolbox?: PageToolboxActions
   sendToOpenList?: SendToOpenListActions
   cookieManager?: CookieManagerViewOptions
@@ -329,6 +331,8 @@ export class ModuleManagementView {
   private readonly browserJournal?: BrowserJournalActions
   private readonly bookmarkDoctor?: BookmarkDoctorActions
   private readonly clashControl?: ClashControlActions
+  private readonly networkManagement?: NetworkManagementViewOptions
+  private networkView: NetworkManagementView | null = null
   private readonly pageToolbox?: PageToolboxActions
   private readonly sendToOpenList?: SendToOpenListActions
   private readonly now: () => string
@@ -406,12 +410,13 @@ export class ModuleManagementView {
   private sendMessage: { message: string, error: boolean } | null = null
   private sendBusy = false
 
-  constructor({ root, client, browserJournal, bookmarkDoctor, clashControl, pageToolbox, sendToOpenList, cookieManager, now = () => new Date().toISOString(), onRecordChanged, onRecordRemoved, onRecordInstalled }: ModuleManagementViewOptions) {
+  constructor({ root, client, browserJournal, bookmarkDoctor, clashControl, networkManagement, pageToolbox, sendToOpenList, cookieManager, now = () => new Date().toISOString(), onRecordChanged, onRecordRemoved, onRecordInstalled }: ModuleManagementViewOptions) {
     this.cookieManager = cookieManager
     this.client = client
     this.browserJournal = browserJournal
     this.bookmarkDoctor = bookmarkDoctor
     this.clashControl = clashControl
+    this.networkManagement = networkManagement
     this.pageToolbox = pageToolbox
     this.sendToOpenList = sendToOpenList
     this.now = now
@@ -674,6 +679,8 @@ export class ModuleManagementView {
   }
 
   private render() {
+    if (!this.records.some(record => record.manifest.id === CLASH_CONTROL_MODULE_ID && record.enabled))
+      this.clearNetworkView()
     if (!this.records.some(record => record.manifest.id === COOKIE_MANAGER_MODULE_ID && record.enabled)) {
       this.cookieView?.destroy()
       this.cookieView = null
@@ -744,8 +751,16 @@ export class ModuleManagementView {
       card.append(this.renderBrowserJournalSection(record))
     if (record.manifest.runtime === 'builtin' && record.manifest.entry_id === BOOKMARK_DOCTOR_ENTRY_ID)
       card.append(this.renderBookmarkDoctorSection(record))
-    if (record.manifest.runtime === 'builtin' && record.manifest.entry_id === CLASH_CONTROL_ENTRY_ID)
+    if (record.manifest.runtime === 'builtin' && record.manifest.entry_id === CLASH_CONTROL_ENTRY_ID) {
+      if (record.enabled && this.networkManagement) {
+        if (!this.networkView) {
+          this.networkView = new NetworkManagementView(element('section', ''), this.networkManagement)
+          void this.networkView.refresh()
+        }
+        card.append(this.networkView.root)
+      }
       card.append(this.renderClashControlSection(record))
+    }
     if (record.manifest.runtime === 'builtin' && record.manifest.entry_id === PAGE_TOOLBOX_ENTRY_ID)
       card.append(this.renderPageToolboxSection())
     if (record.manifest.runtime === 'builtin' && record.manifest.entry_id === SEND_TO_OPENLIST_ENTRY_ID)
@@ -763,6 +778,11 @@ export class ModuleManagementView {
       card.append(this.renderUpdateSection(record))
     card.append(footer)
     return card
+  }
+
+  clearNetworkView() {
+    this.networkView?.destroy()
+    this.networkView = null
   }
 
   clearCookieSession() {
@@ -1320,7 +1340,7 @@ export class ModuleManagementView {
     input.dataset.testid = 'clash-controller-url'
     label.append(input)
     section.append(
-      element('p', 'clash-control-note', '仅接受 localhost、127.0.0.0/8 或 [::1] 的纯 origin；后台只访问固定只读端点。'),
+      element('p', 'clash-control-note', '仅接受 localhost、127.0.0.0/8 或 [::1] 的纯 origin；后台读取固定状态端点，节点切换需单独审查确认。'),
       label,
       this.clashActionButton('clash-prepare', '检查地址', this.clashBusy),
     )

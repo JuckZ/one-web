@@ -47,6 +47,15 @@ leave the extension only through explicit clipboard or plaintext JSON download a
 scope overlap is registered with the existing shared-origin coordinator. The behavior and public
 test boundaries are specified in [Cookie Manager SDD](specs/cookie-manager.md).
 
+## 网络管理
+
+网络管理复用 `dev.oneweb.clash-control` 的既有记录与入口，由原 Clash connector 和
+`src/modules/builtin/network-management/` 的 WebRTC 控制器组合。两者共享模块启停，
+独立处理 localhost 凭据与浏览器隐私设置。WebRTC 的固定 runtime 接口只对受信任打包页开放，
+采用可选 privacy 权限、浏览器实际策略读回及固定 MAIN/document_start 脚本；
+不向远程模块增加能力。Firefox 使用原生 regular 范围，界面明确其隐私窗口影响。
+决策见 [ADR-0023](adr/0023-network-management-webrtc.md)。
+
 ## Target stack
 
 - **Manifest V3 first**, with Firefox compatibility isolated behind manifest generation branches.

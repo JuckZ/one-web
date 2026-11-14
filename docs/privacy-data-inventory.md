@@ -22,3 +22,16 @@ Cookie and host permissions are optional. Browser host grants are shared between
 Cookie management clears its own authority, preserves shared browser permissions and never deletes
 browser cookies. Its active-scope probe prevents other builtin permission cleanup from releasing
 an overlapping grant still in use.
+
+## Network Management local settings
+
+Network Management stores only the user's WebRTC policy, three page-blocking preferences and
+explicit protection intent in `oneweb.network-management.v1`. Optional `privacy` access changes
+the WebRTC IP policy. Chromium uses a regular-profile-only override. Firefox uses its native
+regular setting, which also applies to private windows; the management view explains this before
+applying it. This does not grant the extension permission to run in private windows. Optional HTTP/HTTPS host access enables fixed page
+scripts that hide RTC/media objects without reading page content or sending network requests.
+Disabling protection releases OneWeb's own policy override and scripts; existing documents need
+a reload to regain their native objects. The explicit leak-test button opens an external website,
+which receives an ordinary browser visit; OneWeb sends no additional diagnostic payload.
+Clash secrets retain their existing transient, trusted-background-only lifecycle.

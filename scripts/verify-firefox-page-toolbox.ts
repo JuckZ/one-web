@@ -13,11 +13,15 @@ const EXTENSION_ID = 'one-web@juckz.local'
 const EXTENSION_SIDEBAR_IDENTITY = EXTENSION_ID.split('@')[0]
 const PAGE_TOOLBOX_ID = 'dev.oneweb.page-toolbox'
 const SEND_TO_OPENLIST_ID = 'dev.oneweb.send-to-openlist'
+const NETWORK_MANAGEMENT_ID = 'dev.oneweb.clash-control'
 const COMMAND_TIMEOUT_MS = 30_000
 const STARTUP_TIMEOUT_MS = 45_000
 const POLL_INTERVAL_MS = 100
 
 type JsonRecord = Record<string, unknown>
+
+interface FirefoxClashRequests { version: number, configs: number, proxies: number, unauthorized: number }
+const FIREFOX_CLASH_SECRET = 'oneweb-firefox-network-clash-secret'
 
 export function encodeLengthPrefixedJson(value: unknown) {
   const payload = JSON.stringify(value)
@@ -344,12 +348,46 @@ function renderPageToolboxFixture(label: string) {
   ].join('')
 }
 
+function renderNetworkFixture(frame: boolean) {
+  const recorder = '<script nonce="network">document.documentElement.dataset.network=JSON.stringify({peer:typeof RTCPeerConnection,track:typeof MediaStreamTrack,description:typeof RTCSessionDescription,media:typeof navigator.mediaDevices,mediaBlocked:navigator.mediaDevices===null,ice:typeof RTCIceCandidate,channel:typeof RTCDataChannel})</script>'
+  const srcdoc = recorder.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Firefox WebRTC fixture</title>${recorder}</head><body>${frame ? '' : `<iframe id="network-http" src="/network-frame"></iframe><iframe id="network-srcdoc" srcdoc="${srcdoc}"></iframe>`}</body></html>`
+}
+
 async function startFixtures() {
   const sendToken = 'oneweb-firefox-openlist-token'
   const sendRequests = { me: 0, tools: 0, add: 0, undone: 0, unauthorized: 0 }
   const sendTasks: Array<Record<string, unknown>> = []
+  const clashRequests: FirefoxClashRequests = { version: 0, configs: 0, proxies: 0, unauthorized: 0 }
   const server = createServer((request, response) => {
     const url = new URL(request.url || '/', 'http://127.0.0.1')
+    if (['/version', '/configs', '/proxies'].includes(url.pathname)) {
+      if (request.method !== 'GET' || request.headers.authorization !== `Bearer ${FIREFOX_CLASH_SECRET}`) {
+        clashRequests.unauthorized++
+        response.writeHead(401, { 'content-type': 'application/json' }).end('{"error":"unauthorized"}')
+        return
+      }
+      const endpoint = url.pathname.slice(1) as 'version' | 'configs' | 'proxies'
+      clashRequests[endpoint]++
+      const payloads = {
+        version: { meta: true, version: 'firefox-network-fixture-1.0' },
+        configs: { mode: 'rule' },
+        proxies: { proxies: {
+          'Firefox Proxy': { type: 'Selector', now: 'Firefox Node', all: ['Firefox Node'] },
+          'Firefox Node': { type: 'Direct', alive: true },
+        } },
+      }
+      response.writeHead(200, { 'cache-control': 'no-store', 'content-type': 'application/json' }).end(JSON.stringify(payloads[endpoint]))
+      return
+    }
+    if (url.pathname === '/network-page' || url.pathname === '/network-frame') {
+      response.writeHead(200, {
+        'cache-control': 'no-store',
+        'content-type': 'text/html; charset=utf-8',
+        'content-security-policy': 'script-src \'nonce-network\'; frame-src \'self\'',
+      }).end(renderNetworkFixture(url.pathname === '/network-frame'))
+      return
+    }
     const reply = (code: number, data: unknown, status = 200) => response.writeHead(status, {
       'cache-control': 'no-store',
       'content-type': 'application/json; charset=utf-8',
@@ -430,6 +468,7 @@ async function startFixtures() {
     server,
     sendRequests,
     sendToken,
+    clashRequests,
   }
 }
 
@@ -550,6 +589,17 @@ async function waitForPage(client: MarionetteClient, predicate: string, label: s
     COMMAND_TIMEOUT_MS,
     label,
   )
+}
+
+async function showModuleManagement(client: MarionetteClient, driverHandle: string) {
+  await switchWindow(client, driverHandle)
+  await execute(client, 'const button=document.querySelector("[data-testid=manage-modules]");if(button?.getAttribute("aria-expanded")!=="true")button?.click();return true')
+  await waitForPage(client, `document.querySelector('[data-testid="module-manager"] [data-module-id="${NETWORK_MANAGEMENT_ID}"] [data-testid="module-toggle"]')`, 'Firefox module management')
+}
+
+async function showBuiltinTool(client: MarionetteClient, driverHandle: string, moduleId: string, selector: string) {
+  await showModuleManagement(client, driverHandle)
+  await waitForPage(client, `document.querySelector('[data-module-id="${moduleId}"]')&&document.querySelector(${JSON.stringify(selector)})`, 'Firefox builtin management tool')
 }
 
 async function grantExactOrigin(client: MarionetteClient, originPattern: string) {
@@ -686,6 +736,7 @@ async function runFirefoxScenario(
   betaOrigin: string,
   sendToken: string,
   sendRequests: { me: number, tools: number, add: number, undone: number, unauthorized: number },
+  clashRequests: FirefoxClashRequests,
 ) {
   await client.command('WebDriver:NewSession', { capabilities: { alwaysMatch: {} } })
   const handles = await client.command('WebDriver:GetWindowHandles')
@@ -708,6 +759,12 @@ async function runFirefoxScenario(
   assert(typeof actualSidebar.current === 'string' && actualSidebar.current.includes(EXTENSION_SIDEBAR_IDENTITY), 'Firefox sidebar identity is invalid')
   await setContext(client, 'content')
   await switchWindow(client, driverHandle)
+
+  if (process.env.FIREFOX_SCENARIO === 'network') {
+    await runNetworkManagementFirefoxScenario(client, driverHandle, alphaOrigin, clashRequests)
+    process.stdout.write('Firefox network management targeted gate: 1/1 passed\n')
+    return
+  }
 
   await execute(client, 'document.querySelector("[data-testid=manage-modules]").click();return true')
   await waitForPage(client, `document.querySelector('[data-testid="module-card"][data-module-id="${PAGE_TOOLBOX_ID}"]')`, 'Page Toolbox module card')
@@ -889,7 +946,8 @@ async function runFirefoxScenario(
   assert(JSON.stringify(sendProtectedAfter) === JSON.stringify(sendProtectedBefore), 'Firefox Send to OpenList changed protected module records')
   assert(sendRequests.me === 1 && sendRequests.tools === 1 && sendRequests.add === 1 && sendRequests.undone === 1 && sendRequests.unauthorized === 0, `Firefox fixed connector requests are invalid: ${JSON.stringify(sendRequests)}`)
   await runCookieManagerFirefoxScenario(client, driverHandle)
-  process.stdout.write('Firefox packaged-builtin gates: 3/3 passed (Page Toolbox + Send to OpenList + Cookie Manager CRUD/partition/JSON/revocation/isolation)\n')
+  await runNetworkManagementFirefoxScenario(client, driverHandle, alphaOrigin, clashRequests)
+  process.stdout.write('Firefox packaged-builtin gates: 4/4 passed (Page Toolbox + Send to OpenList + Cookie Manager CRUD/partition/JSON/revocation/isolation + Network Management WebRTC/Clash)\n')
 }
 
 async function runCookieManagerFirefoxScenario(client: MarionetteClient, driverHandle: string) {
@@ -952,6 +1010,290 @@ async function runCookieManagerFirefoxScenario(client: MarionetteClient, driverH
   assert(result.ok === true, `Firefox Cookie Manager failed: ${String(result.error)}`)
 }
 
+async function clickElement(client: MarionetteClient, selector: string) {
+  const found = asRecord(unwrapValue(await client.command('WebDriver:FindElement', {
+    using: 'css selector',
+    value: selector,
+  })), 'Firefox click target')
+  const id = found['element-6066-11e4-a52e-4f735466cecf']
+  assert(typeof id === 'string', `Firefox click target missing: ${selector}`)
+  await client.command('WebDriver:ElementClick', { id })
+}
+
+async function networkFixtureState(client: MarionetteClient, expected: JsonRecord) {
+  await waitForPage(client, 'document.documentElement.dataset.network&&document.querySelector("#network-http")?.contentDocument?.documentElement?.dataset.network&&document.querySelector("#network-srcdoc")?.contentDocument?.documentElement?.dataset.network', 'Firefox first-script WebRTC snapshots')
+  const observed = asRecord(await execute(client, [
+    'const read=doc=>JSON.parse(doc.documentElement.dataset.network);',
+    'return {main:read(document),http:read(document.querySelector("#network-http").contentDocument),srcdoc:read(document.querySelector("#network-srcdoc").contentDocument)};',
+  ].join('')), 'Firefox WebRTC page snapshots')
+  for (const frame of ['main', 'http', 'srcdoc']) {
+    const snapshot = asRecord(observed[frame], `Firefox ${frame} first-script snapshot`)
+    assert(Object.entries(expected).every(([key, value]) => snapshot[key] === value), `Firefox ${frame} first-script WebRTC mismatch: ${JSON.stringify(snapshot)}; expected ${JSON.stringify(expected)}`)
+  }
+}
+
+async function runNetworkManagementFirefoxScenario(client: MarionetteClient, driverHandle: string, origin: string, clashRequests: FirefoxClashRequests) {
+  await showModuleManagement(client, driverHandle)
+  await execute(client, [
+    `const toggle=document.querySelector('[data-module-id="${NETWORK_MANAGEMENT_ID}"] [data-testid="module-toggle"]');`,
+    'if(toggle?.getAttribute("aria-checked")!=="true")toggle?.click();return true;',
+  ].join(''))
+  await waitForPage(client, `document.querySelector('[data-module-id="${NETWORK_MANAGEMENT_ID}"] [data-testid="module-toggle"]')?.getAttribute("aria-checked")==="true"`, 'Firefox network module enabled')
+  await showBuiltinTool(client, driverHandle, NETWORK_MANAGEMENT_ID, '[data-testid=network-management]')
+  const driverUrl = await execute(client, 'return location.href')
+  assert(typeof driverUrl === 'string', 'Firefox network driver URL is unavailable')
+  const peerRecords = await executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    'browser.storage.local.get("oneweb.modules.v1").then(stored=>done(JSON.stringify((stored["oneweb.modules.v1"]||[]).filter(record=>record.manifest.id!=="dev.oneweb.clash-control"))),error=>done({error:String(error)}));',
+  ].join(''))
+  const scope = await execute(client, 'return document.querySelector("[data-testid=network-scope]")?.textContent')
+  assert(typeof scope === 'string' && scope.includes('普通窗口') && scope.includes('隐私窗口'), 'Firefox does not explain its native WebRTC policy scope')
+
+  // Policy-only protection needs no page access. Grant optional permissions only
+  // inside the web-ext-owned temporary profile; the production manifest stays optional.
+  await setContext(client, 'chrome')
+  const grant = asRecord(await executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    '(async()=>{',
+    'const {ExtensionPermissions}=ChromeUtils.importESModule("resource://gre/modules/ExtensionPermissions.sys.mjs");',
+    `const policy=WebExtensionPolicy.getByID(${JSON.stringify(EXTENSION_ID)});`,
+    'if(!policy?.extension)throw new Error("temporary OneWeb policy missing");',
+    'await ExtensionPermissions.remove(policy.id,{permissions:[],origins:["http://*/*","https://*/*"]},policy.extension);',
+    'await ExtensionPermissions.add(policy.id,{permissions:["privacy"],origins:[]},policy.extension);',
+    'return {ok:true};',
+    '})().then(done,error=>done({ok:false,error:String(error)}));',
+  ].join('')), 'Firefox network privacy-only bootstrap')
+  assert(grant.ok === true, `Firefox network permission bootstrap failed: ${String(grant.error)}`)
+  await setContext(client, 'content')
+  await waitForPage(client, 'typeof browser.privacy?.network?.webRTCIPHandlingPolicy?.get==="function"', 'Firefox privacy namespace')
+  await pollUntil(() => executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    'browser.permissions.contains({permissions:["privacy"]}).then(done,error=>done(false));',
+  ].join('')), COMMAND_TIMEOUT_MS, 'Firefox privacy-only permission active')
+  const before = asRecord(await executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    '(async()=>({policy:await browser.privacy.network.webRTCIPHandlingPolicy.get({}),',
+    'hosts:await browser.permissions.contains({origins:["http://*/*","https://*/*"]}),',
+    'scripts:await browser.scripting.getRegisteredContentScripts({ids:["oneweb-network-support","oneweb-network-devices","oneweb-network-additional"]})}))()',
+    '.then(done,error=>done({error:String(error)}));',
+  ].join('')), 'Firefox network baseline')
+  assert(!before.error && before.hosts === false, `Firefox network baseline is not privacy-only: ${JSON.stringify(before)}`)
+  assert(Array.isArray(before.scripts) && before.scripts.length === 0, 'Firefox network baseline has unexpected page registrations')
+  assert(asRecord(before.policy, 'Firefox network baseline policy').levelOfControl !== 'controlled_by_this_extension', 'Firefox network baseline already owns the policy')
+
+  if (await execute(client, 'return document.querySelector("[data-testid=network-block-support]")?.checked'))
+    await clickElement(client, '[data-testid=network-block-support]')
+  await clickElement(client, '[data-testid=network-apply]')
+  await waitForPage(client, 'document.querySelector("[data-testid=network-management]")?.getAttribute("aria-busy")==="false"', 'Firefox WebRTC apply completed')
+  const feedback = await execute(client, 'return document.querySelector("[data-testid=network-message]")?.textContent')
+  assert(typeof feedback === 'string' && feedback.includes('设置已应用'), `Firefox must apply WebRTC protection; received: ${String(feedback)}`)
+  const after = asRecord(await executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    '(async()=>({policy:await browser.privacy.network.webRTCIPHandlingPolicy.get({}),',
+    'privatePolicy:await browser.privacy.network.webRTCIPHandlingPolicy.get({incognito:true}),',
+    'hosts:await browser.permissions.contains({origins:["http://*/*","https://*/*"]}),',
+    'scripts:await browser.scripting.getRegisteredContentScripts({ids:["oneweb-network-support","oneweb-network-devices","oneweb-network-additional"]}),',
+    'status:(await browser.runtime.sendMessage({channel:"oneweb.network-management",version:1,type:"status"}))?.result,',
+    'clashPresent:Boolean(document.querySelector("[data-testid=clash-prepare]"))}))()',
+    '.then(done,error=>done({error:String(error)}));',
+  ].join('')), 'Firefox active network result')
+  assert(!after.error, `Firefox network result failed: ${String(after.error)}`)
+  const actualPolicy = asRecord(after.policy, 'Firefox active policy')
+  assert(actualPolicy.value === 'disable_non_proxied_udp' && actualPolicy.levelOfControl === 'controlled_by_this_extension', `Firefox WebRTC policy did not take effect: ${JSON.stringify(actualPolicy)}`)
+  assert(asRecord(after.privatePolicy, 'Firefox active private policy').value === 'disable_non_proxied_udp', 'Firefox private policy did not share the documented native setting')
+  assert(Array.isArray(after.scripts) && after.scripts.length === 0, 'Firefox policy-only protection registered page scripts')
+  assert(after.hosts === false, 'Firefox policy-only protection acquired page access')
+  const result = asRecord(after.status, 'Firefox network status')
+  const status = asRecord(result.value, 'Firefox network status value')
+  assert(result.ok === true && status.protected === true && status.scriptsActive === false, 'Firefox policy-only protection status is incorrect')
+  assert(after.clashPresent === true, 'Firefox network manager lost the existing Clash workflow')
+  await clickElement(client, '[data-testid=network-disable]')
+  await waitForPage(client, 'document.querySelector("[data-testid=network-management]")?.getAttribute("aria-busy")==="false"', 'Firefox WebRTC protection disabled')
+  const restored = asRecord(await executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    'browser.privacy.network.webRTCIPHandlingPolicy.get({}).then(done,error=>done({error:String(error)}));',
+  ].join('')), 'Firefox restored policy')
+  assert(JSON.stringify(restored) === JSON.stringify(before.policy), `Firefox disable did not restore the baseline policy: ${JSON.stringify(restored)}`)
+  for (const policy of ['default_public_and_private_interfaces', 'default_public_interface_only']) {
+    await execute(client, 'document.querySelector("[data-testid=network-policy]").value=arguments[0];return true;', [policy])
+    await clickElement(client, '[data-testid=network-apply]')
+    await waitForPage(client, 'document.querySelector("[data-testid=network-management]")?.getAttribute("aria-busy")==="false"', `Firefox ${policy} apply completed`)
+    const observed = asRecord(await executeAsync(client, [
+      'const done=arguments[arguments.length-1];',
+      'browser.privacy.network.webRTCIPHandlingPolicy.get({}).then(done,error=>done({error:String(error)}));',
+    ].join('')), `Firefox ${policy} readback`)
+    assert(observed.value === policy && observed.levelOfControl === 'controlled_by_this_extension', `Firefox policy ${policy} did not take effect: ${JSON.stringify(observed)}`)
+    const privatePolicy = asRecord(await executeAsync(client, [
+      'const done=arguments[arguments.length-1];',
+      'browser.privacy.network.webRTCIPHandlingPolicy.get({incognito:true}).then(done,error=>done({error:String(error)}));',
+    ].join('')), `Firefox ${policy} private readback`)
+    assert(privatePolicy.value === policy, `Firefox private value differs from its documented global policy: ${JSON.stringify(privatePolicy)}`)
+  }
+  await execute(client, 'document.querySelector("[data-testid=network-policy]").value="default";return true;')
+  await clickElement(client, '[data-testid=network-apply]')
+  await waitForPage(client, 'document.querySelector("[data-testid=network-management]")?.getAttribute("aria-busy")==="false"', 'Firefox default policy released control')
+  const defaultResult = asRecord(await executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    '(async()=>({policy:await browser.privacy.network.webRTCIPHandlingPolicy.get({}),',
+    'status:(await browser.runtime.sendMessage({channel:"oneweb.network-management",version:1,type:"status"}))?.result}))()',
+    '.then(done,error=>done({error:String(error)}));',
+  ].join('')), 'Firefox default policy result')
+  assert(JSON.stringify(defaultResult.policy) === JSON.stringify(before.policy), 'Firefox default option did not release the native policy override')
+  const defaultStatus = asRecord(asRecord(defaultResult.status, 'Firefox default result').value, 'Firefox default status')
+  assert(defaultStatus.protected === false && asRecord(defaultStatus.settings, 'Firefox default settings').enabled === false, 'Firefox default option still reports active protection')
+
+  await setContext(client, 'chrome')
+  const pageGrant = asRecord(await executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    '(async()=>{',
+    'const {ExtensionPermissions}=ChromeUtils.importESModule("resource://gre/modules/ExtensionPermissions.sys.mjs");',
+    `const policy=WebExtensionPolicy.getByID(${JSON.stringify(EXTENSION_ID)});`,
+    'await ExtensionPermissions.add(policy.id,{permissions:[],origins:["http://*/*","https://*/*"]},policy.extension);',
+    'return {ok:true};',
+    '})().then(done,error=>done({ok:false,error:String(error)}));',
+  ].join('')), 'Firefox network page permission bootstrap')
+  assert(pageGrant.ok === true, `Firefox page permission bootstrap failed: ${String(pageGrant.error)}`)
+  await setContext(client, 'content')
+  await pollUntil(() => executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    'browser.permissions.contains({origins:["http://*/*","https://*/*"]}).then(done,error=>done(false));',
+  ].join('')), COMMAND_TIMEOUT_MS, 'Firefox network page permissions active')
+  await execute(client, 'document.querySelector("[data-testid=network-policy]").value="disable_non_proxied_udp";document.querySelector("[data-testid=network-block-support]").checked=true;return true;')
+  await clickElement(client, '[data-testid=network-apply]')
+  await waitForPage(client, 'document.querySelector("[data-testid=network-management]")?.getAttribute("aria-busy")==="false"', 'Firefox support blocking applied')
+  const supportState = await execute(client, 'return document.querySelector("[data-testid=network-status]")?.textContent')
+  assert(typeof supportState === 'string' && supportState.includes('WebRTC 防护已生效'), `Firefox support blocking failed: ${String(supportState)}`)
+  const pageHandle = await newTab(client, `${origin}/network-page`)
+  await networkFixtureState(client, { peer: 'undefined', track: 'undefined', description: 'undefined', media: 'object', mediaBlocked: false, ice: 'function', channel: 'function' })
+  await switchWindow(client, driverHandle)
+  await clickElement(client, '[data-testid=network-disable]')
+  await waitForPage(client, 'document.querySelector("[data-testid=network-management]")?.getAttribute("aria-busy")==="false"', 'Firefox support blocking disabled')
+  await switchWindow(client, pageHandle)
+  await navigate(client, `${origin}/network-page`)
+  await networkFixtureState(client, { peer: 'function', track: 'function', description: 'function', media: 'object', mediaBlocked: false, ice: 'function', channel: 'function' })
+  await switchWindow(client, driverHandle)
+  for (const option of ['devices', 'additional']) {
+    await execute(client, [
+      'document.querySelector("[data-testid=network-block-support]").checked=false;',
+      'document.querySelector("[data-testid=network-block-devices]").checked=arguments[0]==="devices";',
+      'document.querySelector("[data-testid=network-block-additional]").checked=arguments[0]==="additional";return true;',
+    ].join(''), [option])
+    await clickElement(client, '[data-testid=network-apply]')
+    await waitForPage(client, 'document.querySelector("[data-testid=network-management]")?.getAttribute("aria-busy")==="false"', `Firefox ${option} blocking applied`)
+    const state = await execute(client, 'return document.querySelector("[data-testid=network-status]")?.textContent')
+    assert(typeof state === 'string' && state.includes('WebRTC 防护已生效'), `Firefox ${option} blocking failed: ${String(state)}`)
+    await switchWindow(client, pageHandle)
+    await navigate(client, `${origin}/network-page`)
+    await networkFixtureState(client, option === 'devices'
+      ? { peer: 'function', track: 'function', description: 'function', media: 'object', mediaBlocked: true, ice: 'function', channel: 'function' }
+      : { peer: 'function', track: 'function', description: 'function', media: 'object', mediaBlocked: false, ice: 'undefined', channel: 'undefined' })
+    await switchWindow(client, driverHandle)
+  }
+  await clickElement(client, '[data-testid=network-disable]')
+  await waitForPage(client, 'document.querySelector("[data-testid=network-management]")?.getAttribute("aria-busy")==="false"', 'Firefox independent blocking disabled')
+  await switchWindow(client, pageHandle)
+  await navigate(client, `${origin}/network-page`)
+  await networkFixtureState(client, { peer: 'function', track: 'function', description: 'function', media: 'object', mediaBlocked: false, ice: 'function', channel: 'function' })
+  await switchWindow(client, driverHandle)
+  await execute(client, [
+    'document.querySelector("[data-testid=network-block-support]").checked=true;',
+    'document.querySelector("[data-testid=network-block-devices]").checked=false;',
+    'document.querySelector("[data-testid=network-block-additional]").checked=false;return true;',
+  ].join(''))
+  await clickElement(client, '[data-testid=network-apply]')
+  await waitForPage(client, 'document.querySelector("[data-testid=network-status]")?.textContent.includes("WebRTC 防护已生效")&&document.querySelector("[data-testid=network-management]")?.getAttribute("aria-busy")==="false"', 'Firefox protection before addon restart')
+  await setContext(client, 'chrome')
+  const restarted = asRecord(await executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    '(async()=>{',
+    'const {AddonManager}=ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");',
+    `const addon=await AddonManager.getAddonByID(${JSON.stringify(EXTENSION_ID)});`,
+    'if(!addon)throw new Error("temporary OneWeb addon missing");await addon.reload();return {ok:true};',
+    '})().then(done,error=>done({ok:false,error:String(error)}));',
+  ].join('')), 'Firefox temporary addon restart')
+  assert(restarted.ok === true, `Firefox addon restart failed: ${String(restarted.error)}`)
+  await setContext(client, 'content')
+  // Reload closes extension-owned browsing contexts. Start a fresh trusted page
+  // from the ordinary fixture tab rather than using the discarded old handle.
+  await switchWindow(client, pageHandle)
+  driverHandle = await newTab(client, driverUrl)
+  await waitForPage(client, 'document.readyState==="complete"&&document.querySelector("[data-testid=manage-modules]")', 'Firefox trusted sidebar after addon restart')
+  await showBuiltinTool(client, driverHandle, NETWORK_MANAGEMENT_ID, '[data-testid=network-management]')
+  await waitForPage(client, 'document.querySelector("[data-testid=network-status]")?.textContent.includes("WebRTC 防护已生效")', 'Firefox explicitly enabled WebRTC restored after restart')
+  await switchWindow(client, pageHandle)
+  await navigate(client, `${origin}/network-page`)
+  await networkFixtureState(client, { peer: 'undefined', track: 'undefined', description: 'undefined', media: 'object', mediaBlocked: false, ice: 'function', channel: 'function' })
+  await switchWindow(client, driverHandle)
+  const revoked = await executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    'browser.permissions.remove({permissions:["privacy"]}).then(done,error=>done({error:String(error)}));',
+  ].join(''))
+  assert(revoked === true, `Firefox privacy revocation failed: ${JSON.stringify(revoked)}`)
+  await pollUntil(() => executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    '(async()=>{const reply=await browser.runtime.sendMessage({channel:"oneweb.network-management",version:1,type:"status"});',
+    'const state=reply?.result?.value;return reply?.result?.ok===true&&state.settings.enabled===false&&state.protected===false&&state.scriptsActive===false;})()',
+    '.then(done,error=>done(false));',
+  ].join('')), COMMAND_TIMEOUT_MS, 'Firefox privacy revocation cancels protection and scripts')
+  await switchWindow(client, pageHandle)
+  await navigate(client, `${origin}/network-page`)
+  await networkFixtureState(client, { peer: 'function', track: 'function', description: 'function', media: 'object', mediaBlocked: false, ice: 'function', channel: 'function' })
+  await switchWindow(client, driverHandle)
+  await setContext(client, 'chrome')
+  const regranted = asRecord(await executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    '(async()=>{',
+    'const {ExtensionPermissions}=ChromeUtils.importESModule("resource://gre/modules/ExtensionPermissions.sys.mjs");',
+    `const policy=WebExtensionPolicy.getByID(${JSON.stringify(EXTENSION_ID)});`,
+    'await ExtensionPermissions.add(policy.id,{permissions:["privacy"],origins:[]},policy.extension);return {ok:true};',
+    '})().then(done,error=>done({ok:false,error:String(error)}));',
+  ].join('')), 'Firefox privacy regrant for independent readback')
+  assert(regranted.ok === true, `Firefox privacy regrant failed: ${String(regranted.error)}`)
+  await setContext(client, 'content')
+  const released = asRecord(await executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    'browser.privacy.network.webRTCIPHandlingPolicy.get({}).then(done,error=>done({error:String(error)}));',
+  ].join('')), 'Firefox policy after permission revocation')
+  assert(JSON.stringify(released) === JSON.stringify(before.policy), `Firefox revocation did not release the native policy: ${JSON.stringify(released)}`)
+  await clickElement(client, '[data-testid=network-apply]')
+  await waitForPage(client, 'document.querySelector("[data-testid=network-status]")?.textContent.includes("WebRTC 防护已生效")&&document.querySelector("[data-testid=network-management]")?.getAttribute("aria-busy")==="false"', 'Firefox protection explicitly reapplied')
+  assert(JSON.stringify(clashRequests) === JSON.stringify({ version: 0, configs: 0, proxies: 0, unauthorized: 0 }), 'Firefox WebRTC lifecycle triggered automatic Clash requests')
+  const clash = asRecord(await executeAsync(client, [
+    'const origin=arguments[0],secret=arguments[1],done=arguments[arguments.length-1];',
+    '(async()=>{',
+    'const send=async(type,fields={})=>(await browser.runtime.sendMessage({channel:"oneweb.clash-control",version:4,type,...fields}))?.result;',
+    'const check=(condition,label)=>{if(!condition)throw new Error(label)};',
+    'const prepared=await send("CLASH_CONTROL_PREPARE",{controllerUrl:origin});check(prepared?.ok,"prepare");',
+    'const connected=await send("CLASH_CONTROL_CONNECT",{...prepared.preparation,secret});check(connected?.ok&&connected.status?.implementation==="Clash.Meta","connect");',
+    'const read=await send("CLASH_CONTROL_REFRESH");check(read?.ok&&read.snapshot?.mode==="rule"&&read.snapshot.proxyGroups?.[0]?.name==="Firefox Proxy"&&read.snapshot.proxyGroups[0].selectedNode==="Firefox Node","read");',
+    'const disconnected=await send("CLASH_CONTROL_DISCONNECT");check(disconnected?.ok,"disconnect");',
+    'const status=await send("CLASH_CONTROL_STATUS");check(status?.ok&&status.connection?.phase==="disconnected","disconnected status");',
+    'const network=(await browser.runtime.sendMessage({channel:"oneweb.network-management",version:1,type:"status"}))?.result;',
+    'check(network?.ok&&network.value?.protected===true&&network.value.scriptsActive===true,"WebRTC preserved after Clash disconnect");',
+    'check(!JSON.stringify(await browser.storage.local.get(null)).includes(secret),"secret persisted");',
+    'return {ok:true};',
+    '})().then(done,error=>done({ok:false,error:String(error)}));',
+  ].join(''), [origin, FIREFOX_CLASH_SECRET]), 'Firefox Clash connection beside WebRTC protection')
+  assert(clash.ok === true, `Firefox Clash/WebRTC combined flow failed: ${String(clash.error)}`)
+  assert(JSON.stringify(clashRequests) === JSON.stringify({ version: 2, configs: 2, proxies: 1, unauthorized: 0 }), `Firefox Clash request contract failed: ${JSON.stringify(clashRequests)}`)
+  await showModuleManagement(client, driverHandle)
+  await clickElement(client, `[data-module-id="${NETWORK_MANAGEMENT_ID}"] [data-testid=module-toggle]`)
+  await waitForPage(client, `document.querySelector('[data-module-id="${NETWORK_MANAGEMENT_ID}"] [data-testid=module-toggle]')?.getAttribute("aria-checked")==="false"`, 'Firefox network module disabled')
+  const stopped = asRecord(await executeAsync(client, [
+    'const done=arguments[arguments.length-1];',
+    '(async()=>({policy:await browser.privacy.network.webRTCIPHandlingPolicy.get({}),',
+    'scripts:await browser.scripting.getRegisteredContentScripts({ids:["oneweb-network-support","oneweb-network-devices","oneweb-network-additional"]}),',
+    'hosts:await browser.permissions.contains({origins:["http://*/*","https://*/*"]}),',
+    'peers:JSON.stringify(((await browser.storage.local.get("oneweb.modules.v1"))["oneweb.modules.v1"]||[]).filter(record=>record.manifest.id!=="dev.oneweb.clash-control"))}))()',
+    '.then(done,error=>done({error:String(error)}));',
+  ].join('')), 'Firefox network module cleanup')
+  assert(JSON.stringify(stopped.policy) === JSON.stringify(before.policy), 'Firefox module disable did not release the native policy')
+  assert(Array.isArray(stopped.scripts) && stopped.scripts.length === 0, 'Firefox module disable retained page scripts')
+  assert(stopped.hosts === true, 'Firefox module disable removed shared host permissions')
+  assert(stopped.peers === peerRecords, 'Firefox network lifecycle changed another module record')
+  process.stdout.write(`Firefox network: four policies in normal/private readback, three independent MAIN first-script blockers across top/HTTP/srcdoc frames, restart restoration, revocation/module-disable cleanup, peer isolation, authenticated Clash prepare/connect/refresh/disconnect ${JSON.stringify(clashRequests)}\n`)
+}
+
 async function main() {
   const projectDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
   const extensionDir = path.join(projectDir, 'extension')
@@ -1005,6 +1347,7 @@ async function main() {
       fixtures.betaOrigin,
       fixtures.sendToken,
       fixtures.sendRequests,
+      fixtures.clashRequests,
     )
   }
   catch (error) {

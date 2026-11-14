@@ -5,6 +5,7 @@ import { BookmarkDoctorClient } from '~/modules/builtin/bookmark-doctor'
 import { BrowserJournalClient } from '~/modules/builtin/browser-journal'
 import { ClashControlClient } from '~/modules/builtin/clash-control'
 import { CookieManagerClient } from '~/modules/builtin/cookie-manager/protocol'
+import { NetworkManagementClient } from '~/modules/builtin/network-management/protocol'
 import { PageToolboxClient } from '~/modules/builtin/page-toolbox'
 import { SendToOpenListClient } from '~/modules/builtin/send-to-openlist'
 import { type ContextSnapshot, createDefaultContextBroker } from '~/modules/context-broker'
@@ -21,6 +22,7 @@ import { resolveRepoLensInitFields } from '~/repolens/authorization'
 import { ModuleManagementView } from './module-management-view'
 import './sidebar.css'
 import './cookie-manager.css'
+import './network-management.css'
 
 const REPOLENS_MODULE_ID = 'dev.juck.repolens'
 const frame = document.querySelector<HTMLIFrameElement>('[data-testid="oneweb-module-frame"]')!
@@ -58,6 +60,9 @@ const clashControlClient = new ClashControlClient(
   { sendMessage: message => browser.runtime.sendMessage(message) },
   browser.permissions,
 )
+const networkManagementClient = new NetworkManagementClient({
+  sendMessage: message => browser.runtime.sendMessage(message),
+})
 const pageToolboxClient = new PageToolboxClient(
   { sendMessage: message => browser.runtime.sendMessage(message) },
   browser.permissions,
@@ -203,6 +208,7 @@ function openModuleManager() {
 
 function closeModuleManager() {
   managementView.clearCookieSession()
+  managementView.clearNetworkView()
   shell.dataset.view = 'module'
   managerSurface.hidden = true
   moduleSurface.hidden = false
@@ -215,6 +221,12 @@ managementView = new ModuleManagementView({
   browserJournal: browserJournalClient,
   bookmarkDoctor: bookmarkDoctorClient,
   clashControl: clashControlClient,
+  networkManagement: {
+    client: networkManagementClient,
+    permissions: browser.permissions,
+    firefox: __FIREFOX__,
+    openTest: () => browser.tabs.create({ url: 'https://webbrowsertools.com/test-webrtc-leak/' }),
+  },
   pageToolbox: pageToolboxClient,
   sendToOpenList: sendToOpenListClient,
   cookieManager: {

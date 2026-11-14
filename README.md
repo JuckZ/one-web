@@ -67,6 +67,18 @@ Closing the manager, hiding the page or disabling the module clears the session;
 permissions remain available to other modules. See the
 [specification](docs/specs/cookie-manager.md) and [reference audit](docs/research/cookie-editor-reference.md).
 
+## 网络管理
+
+原 Clash Control 入口现统一为“网络管理”，保留已安装模块身份、Clash 连接与审查后节点切换。
+WebRTC 防护提供四种 IP 处理策略，以及隐藏支持检测、阻止媒体设备和隐藏额外 RTC 对象三个选项。
+首次应用时明确申请可选 `privacy` 权限；页面选项另需 HTTP/HTTPS 全站访问。
+界面显示实际浏览器策略与控制权，关闭后释放本扩展覆盖。页面屏蔽对新文档生效，切换后需刷新；
+它会影响网页通话和音视频，不证明系统代理已生效或完全没有 IP 泄漏。
+泄漏检测按钮只在点击后打开外部检测站点。
+WebRTC 防护支持 Chromium 和 Firefox。Firefox 的 IP 策略也作用于隐私窗口，界面会在应用前说明；
+页面屏蔽仅作用于允许 OneWeb 运行的窗口。
+详见[规格](docs/specs/network-management.md)及[源码审计](docs/research/webrtc-control-reference.md)。
+
 ## Verification
 
 ```bash
@@ -106,6 +118,7 @@ RepoLens /embed
   plus exact GitHub and RepoLens host permissions. `scripting` remains gated by explicit Page
   Toolbox exact-origin permission and a fixed packaged entry.
 - `cookies` is optional and requested only through Cookie Manager's explicit authorization action.
+- `privacy` is optional and requested only through Network Management's explicit WebRTC action.
 - The initial RepoLens handshake checks exact `event.origin`, `event.source`, module ID and protocol
   version; later messages use the transferred port and still require the module ID and nonce.
 - Production uses HTTPS, explicit extension origins, `AUTH_MODE=session`, a one-time authorization
