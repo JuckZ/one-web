@@ -2,10 +2,10 @@ import type { BrowserContext, FrameLocator, Page } from '@playwright/test'
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
-import { expect, extensionPath, test } from './fixtures'
+import { expect, extensionPath, repolensFixtureOrigin, test } from './fixtures'
 
 const browserLabel = process.env.PW_BROWSER_CHANNEL === 'msedge' ? 'edge' : (process.env.PW_BROWSER_CHANNEL === 'chrome' ? 'chrome' : 'chromium')
-const reportScreenshot = path.resolve(process.cwd(), 'test-results', `oneweb-${browserLabel}-side-panel.png`)
+const reportScreenshot = path.resolve(process.cwd(), process.env.ONEWEB_TEST_OUTPUT_DIR || 'test-results', `oneweb-${browserLabel}-side-panel.png`)
 
 interface RpcFixtureBrowserApi {
   beginHold: (_marker?: string) => Promise<string>
@@ -52,9 +52,42 @@ async function openManagementPanel(context: BrowserContext, extensionId: string)
   const panel = await context.newPage()
   await panel.setViewportSize({ width: 420, height: 900 })
   await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
-  await panel.getByTestId('manage-modules').click()
+  await panel.locator('[data-destination="settings"]').click()
   await expect(panel.getByTestId('module-manager')).toBeVisible()
   return panel
+}
+
+async function openTool(panel: Page, moduleId: string) {
+  await panel.locator('[data-destination="tools"]').click()
+  await panel.locator(`[data-open-module="${moduleId}"]`).click()
+  await expect(panel.locator(`[data-testid="module-card"][data-module-id="${moduleId}"]`)).toBeVisible()
+}
+
+async function restartExtensionBackground(context: BrowserContext) {
+  let [background] = context.serviceWorkers()
+  if (!background)
+    background = await context.waitForEvent('serviceworker')
+
+  const browser = context.browser()
+  if (!browser)
+    throw new Error('Persistent Chromium context did not expose its browser')
+
+  const cdp = await browser.newBrowserCDPSession()
+  try {
+    const { targetInfos } = await cdp.send('Target.getTargets')
+    const workerTarget = targetInfos.find(target => (
+      target.type === 'service_worker' && target.url === background.url()
+    ))
+    if (!workerTarget)
+      throw new Error(`Unable to locate extension service worker target: ${background.url()}`)
+    await cdp.send('Target.closeTarget', { targetId: workerTarget.targetId })
+  }
+  finally {
+    await cdp.detach()
+  }
+
+  // Opening the extension surface below wakes the MV3 worker on demand.
+  await new Promise(resolve => setTimeout(resolve, 100))
 }
 
 async function installFixtureModule(
@@ -133,7 +166,7 @@ test('built artifact exposes a least-privilege RepoLens side panel', async ({ ex
   expect(manifest.permissions).toEqual(['activeTab', 'contextMenus', 'scripting', 'storage', 'tabs', 'sidePanel'])
   expect(manifest.optional_permissions).toEqual(['bookmarks', 'cookies', 'privacy'])
   expect(manifest.optional_host_permissions).toEqual(['https://*/*', 'http://*/*'])
-  expect(manifest.host_permissions).toEqual(['https://github.com/*', 'http://127.0.0.1:4747/*'])
+  expect(manifest.host_permissions).toEqual(['https://github.com/*', `${repolensFixtureOrigin}/*`])
   expect(manifest.content_scripts[0].matches).toEqual(['https://github.com/*'])
   expect(JSON.stringify(manifest.content_scripts)).not.toContain('pageToolbox')
   const toolboxRuntime = fs.readFileSync(`${extensionPath}/dist/pageToolbox/index.global.js`, 'utf8')
@@ -167,6 +200,7 @@ test('Send to OpenList uses one approved exact origin and fixed trusted backgrou
     id,
     await readStoredModule(panel, id),
   ])))
+  await openTool(panel, 'dev.oneweb.send-to-openlist')
   const card = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.send-to-openlist"]')
   await expect(card).toBeVisible()
   await card.getByTestId('module-toggle').click()
@@ -265,6 +299,7 @@ test('Send to OpenList manual MVP reviews candidates and cancels only a fresh se
   openListFixture,
 }) => {
   const panel = await openManagementPanel(context, extensionId)
+  await openTool(panel, 'dev.oneweb.send-to-openlist')
   const card = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.send-to-openlist"]')
   await card.getByTestId('module-toggle').click()
   await expect(card.getByTestId('module-toggle')).toHaveAttribute('aria-checked', 'true')
@@ -322,6 +357,7 @@ test('Send to OpenList discovers only reviewed top-frame browser resources witho
   const site = await context.newPage()
   await site.goto(`${siteOrigin}/journal-page-toolbox-poc`, { waitUntil: 'domcontentloaded' })
   const panel = await openManagementPanel(context, extensionId)
+  await openTool(panel, 'dev.oneweb.send-to-openlist')
   const card = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.send-to-openlist"]')
   await card.getByTestId('module-toggle').click()
   await card.getByTestId('send-openlist-profile-label').fill('Discovery fixture')
@@ -526,13 +562,8 @@ test('Send to OpenList keeps OpenList and AList profiles, secrets and lifecycle 
     openlist: { ...openListFixture.requests },
     alist: { ...alistFixture.requests },
   }
-  let [background] = context.serviceWorkers()
-  if (!background)
-    background = await context.waitForEvent('serviceworker')
-  const workerEvent = context.waitForEvent('serviceworker')
-  await background.evaluate(() => chrome.runtime.reload()).catch(() => undefined)
   await panel.close().catch(() => undefined)
-  await workerEvent
+  await restartExtensionBackground(context)
   panel = await openManagementPanel(context, extensionId)
   const restarted = await panel.evaluate(async () => (
     await chrome.runtime.sendMessage({ channel: 'oneweb.send-to-openlist', version: 1, type: 'SEND_TO_OPENLIST_STATUS' })
@@ -578,6 +609,7 @@ test('Page Toolbox injects one authenticated empty-tool runtime at an approved e
   const pristineHtml = await site.locator('html').evaluate(node => node.outerHTML)
 
   let panel = await openManagementPanel(context, extensionId)
+  await openTool(panel, 'dev.oneweb.page-toolbox')
   const toolboxCard = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.page-toolbox"]')
   await expect(toolboxCard).toBeVisible()
   await expect(toolboxCard.getByTestId('module-toggle')).toHaveAttribute('aria-checked', 'false')
@@ -655,13 +687,8 @@ test('Page Toolbox injects one authenticated empty-tool runtime at an approved e
     return session?.phase === 'ready' ? session.generation : 0
   }).toBeGreaterThan(firstGeneration)
 
-  let [background] = context.serviceWorkers()
-  if (!background)
-    background = await context.waitForEvent('serviceworker')
-  const workerEvent = context.waitForEvent('serviceworker')
-  await background.evaluate(() => chrome.runtime.reload()).catch(() => undefined)
   await panel.close().catch(() => undefined)
-  await workerEvent
+  await restartExtensionBackground(context)
   panel = await openManagementPanel(context, extensionId)
   const restartedStatus = () => panel.evaluate(async () => (
     await chrome.runtime.sendMessage({
@@ -727,6 +754,7 @@ test('Page Toolbox runs three explicit reversible tools without crossing site or
   const storageBefore = await panel.evaluate(async () => chrome.storage.local.get(null))
   const permissionsBefore = await panel.evaluate(async () => chrome.permissions.getAll())
 
+  await openTool(panel, 'dev.oneweb.page-toolbox')
   const toolboxCard = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.page-toolbox"]')
   await toolboxCard.getByTestId('module-toggle').click()
   await expect(toolboxCard.getByTestId('module-toggle')).toHaveAttribute('aria-checked', 'true')
@@ -907,7 +935,7 @@ test('Page Toolbox runs three explicit reversible tools without crossing site or
   expect(permissionsAfter.permissions).toEqual(permissionsBefore.permissions)
   expect((permissionsAfter.origins || []).sort()).toEqual((permissionsBefore.origins || []).sort())
   const storageAfter = await panel.evaluate(async () => chrome.storage.local.get(null))
-  for (const key of ['oneweb.modules.v1', 'oneweb.module-state.v1:dev.oneweb.page-toolbox']) {
+  for (const key of ['oneweb.modules.v1', 'oneweb.module-state.v1:dev.oneweb.page-toolbox', 'oneweb.workspace.v1']) {
     delete storageBefore[key]
     delete storageAfter[key]
   }
@@ -952,6 +980,7 @@ test('Page Toolbox keeps two exact origins and overlapping tool lifecycles fully
   const storageBefore = await panel.evaluate(async () => chrome.storage.local.get(null))
   const permissionsBefore = await panel.evaluate(async () => chrome.permissions.getAll())
 
+  await openTool(panel, 'dev.oneweb.page-toolbox')
   const toolboxCard = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.page-toolbox"]')
   await toolboxCard.getByTestId('module-toggle').click()
   await expect(toolboxCard.getByTestId('module-toggle')).toHaveAttribute('aria-checked', 'true')
@@ -1117,7 +1146,7 @@ test('Page Toolbox keeps two exact origins and overlapping tool lifecycles fully
   expect(permissionsAfter.permissions).toEqual(permissionsBefore.permissions)
   expect((permissionsAfter.origins || []).sort()).toEqual((permissionsBefore.origins || []).sort())
   const storageAfter = await panel.evaluate(async () => chrome.storage.local.get(null))
-  for (const key of ['oneweb.modules.v1', 'oneweb.module-state.v1:dev.oneweb.page-toolbox']) {
+  for (const key of ['oneweb.modules.v1', 'oneweb.module-state.v1:dev.oneweb.page-toolbox', 'oneweb.workspace.v1']) {
     delete storageBefore[key]
     delete storageAfter[key]
   }
@@ -1136,6 +1165,7 @@ test('Page Toolbox trusted sidebar saves current-site settings with CAS and reje
   const site = await context.newPage()
   await site.goto(`${alphaOrigin}/journal-page-toolbox-poc`, { waitUntil: 'domcontentloaded' })
   const panelA = await openManagementPanel(context, extensionId)
+  await openTool(panelA, 'dev.oneweb.page-toolbox')
   const toolboxCardA = panelA.locator('[data-testid="module-card"][data-module-id="dev.oneweb.page-toolbox"]')
   const isolatedIds = [
     'dev.juck.repolens',
@@ -1184,6 +1214,7 @@ test('Page Toolbox trusted sidebar saves current-site settings with CAS and reje
   await expect(site.locator('#toolbox-password')).toHaveAttribute('type', 'password')
 
   const panelB = await openManagementPanel(context, extensionId)
+  await openTool(panelB, 'dev.oneweb.page-toolbox')
   const toolboxCardB = panelB.locator('[data-testid="module-card"][data-module-id="dev.oneweb.page-toolbox"]')
   await refreshForActiveSite(panelA)
   await refreshForActiveSite(panelB)
@@ -1268,6 +1299,7 @@ test('Page Toolbox closed Shadow control stays generation-bound across two origi
   let panel = await openManagementPanel(context, extensionId)
   await installFixtureModule(panel, moduleFixtures.primary.manifestUrl, moduleFixtures.primary.manifest.id)
   await installFixtureModule(panel, moduleFixtures.secondary.manifestUrl, moduleFixtures.secondary.manifest.id)
+  await openTool(panel, 'dev.oneweb.page-toolbox')
   let toolboxCard = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.page-toolbox"]')
 
   const isolatedIds = [
@@ -1388,14 +1420,10 @@ test('Page Toolbox closed Shadow control stays generation-bound across two origi
   await alpha.locator('[data-oneweb-page-toolbox-control]').evaluate(node => (
     node.setAttribute('data-old-generation', 'worker-restart')
   ))
-  let [background] = context.serviceWorkers()
-  if (!background)
-    background = await context.waitForEvent('serviceworker')
-  const workerEvent = context.waitForEvent('serviceworker')
-  await background.evaluate(() => chrome.runtime.reload()).catch(() => undefined)
   await panel.close().catch(() => undefined)
-  await workerEvent
+  await restartExtensionBackground(context)
   panel = await openManagementPanel(context, extensionId)
+  await openTool(panel, 'dev.oneweb.page-toolbox')
   toolboxCard = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.page-toolbox"]')
   await expect.poll(async () => (await sessionForAlpha())?.phase).toBe('ready')
   expect((await sessionForAlpha())?.generation).not.toBe(generationBeforeRestart)
@@ -1428,7 +1456,7 @@ test('Page Toolbox closed Shadow control stays generation-bound across two origi
   expect(permissionsAfter.permissions).toEqual(permissionsBefore.permissions)
   expect((permissionsAfter.origins || []).sort()).toEqual((permissionsBefore.origins || []).sort())
   const storageAfter = await panel.evaluate(() => chrome.storage.local.get(null))
-  for (const key of ['oneweb.modules.v1', 'oneweb.module-state.v1:dev.oneweb.page-toolbox']) {
+  for (const key of ['oneweb.modules.v1', 'oneweb.module-state.v1:dev.oneweb.page-toolbox', 'oneweb.workspace.v1']) {
     delete storageBefore[key]
     delete storageAfter[key]
   }
@@ -1448,7 +1476,7 @@ test('GitHub SPA context reaches the 420px panel through the generic module host
       consoleProblems.push(`panel: ${message.text()}`)
   })
   await panel.setViewportSize({ width: 420, height: 900 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.juck.repolens`)
   await page.bringToFront()
 
   await expect(panel.locator('.brand div span')).toHaveText('vuejs/core', { timeout: 15_000 })
@@ -1542,7 +1570,7 @@ test('GitHub SPA context reaches the 420px panel through the generic module host
       data: { protocol: 'oneweb.module', version: 1, moduleId: 'dev.juck.repolens', type: 'MODULE_STATUS', state: 'owned' },
     }))
     window.postMessage({ protocol: 'oneweb.module', version: 1, moduleId: 'dev.juck.repolens', type: 'MODULE_STATUS', state: 'owned' }, origin)
-  }, 'http://127.0.0.1:4747')
+  }, repolensFixtureOrigin)
   await expect(panel.locator('.bridge-state')).toHaveText(beforeAttack || '')
 
   await embed.getByRole('button', { name: '深度分析' }).click()
@@ -1557,7 +1585,7 @@ test('GitHub SPA context reaches the 420px panel through the generic module host
   expect(layout).toEqual({
     width: 420,
     overflow: 0,
-    iframeOrigin: 'http://127.0.0.1:4747',
+    iframeOrigin: repolensFixtureOrigin,
     extensionHasRuntime: true,
   })
   expect(await embed.locator('body').evaluate(() => Boolean(globalThis.chrome?.runtime))).toBe(false)
@@ -1576,7 +1604,7 @@ test('typed capability client and dispatcher complete result, cancel and stable 
   const rpcPage = await context.newPage()
   const browserErrors: string[] = []
   rpcPage.on('pageerror', error => browserErrors.push(error.message))
-  await rpcPage.goto('http://127.0.0.1:4747/rpc-host')
+  await rpcPage.goto(`${repolensFixtureOrigin}/rpc-host`)
   const rpcFrame = rpcPage.frameLocator('#rpc-frame')
   await expect(rpcPage.locator('#host-state')).toHaveText('ready')
   await expect(rpcFrame.locator('#rpc-result')).toHaveText('chromium')
@@ -1633,7 +1661,7 @@ test('two installed remote modules keep typed RPC failures, quotas and lifecycle
   const rpcPage = await context.newPage()
   const browserErrors: string[] = []
   rpcPage.on('pageerror', error => browserErrors.push(error.message))
-  await rpcPage.goto('http://127.0.0.1:4747/rpc-isolation-host')
+  await rpcPage.goto(`${repolensFixtureOrigin}/rpc-isolation-host`)
   const alphaFrame = rpcPage.frameLocator('#rpc-alpha')
   const betaFrame = rpcPage.frameLocator('#rpc-beta')
   await expect(rpcPage.locator('#alpha-state')).toHaveText('ready')
@@ -1829,7 +1857,7 @@ test('storage.module keeps CAS documents, lifecycle and two installed namespaces
   const stableStorageBefore = await manager.evaluate(async () => {
     const stored = await chrome.storage.local.get(null)
     return Object.fromEntries(Object.entries(stored).filter(([key]) => (
-      key !== 'oneweb.modules.v1' && !key.startsWith('oneweb.remote-storage.v1:')
+      key !== 'oneweb.modules.v1' && key !== 'oneweb.workspace.v1' && !key.startsWith('oneweb.remote-storage.v1:')
     )))
   })
   const permissionsBefore = await manager.evaluate(() => chrome.permissions.getAll())
@@ -1950,9 +1978,7 @@ test('storage.module keeps CAS documents, lifecycle and two installed namespaces
   const secondaryBeforeRestart = await readStoredModule(manager, moduleFixtures.secondary.manifest.id)
   const peerBeforeRestart = await readStoredModule(manager, moduleFixtures.storagePeer.manifest.id)
   await Promise.all([manager.close(), secondarySurface.panel.close(), peerSurface.panel.close()])
-  const background = context.serviceWorkers()[0]
-  await background.evaluate(() => chrome.runtime.reload()).catch(() => undefined)
-  await new Promise(resolve => setTimeout(resolve, 500))
+  await restartExtensionBackground(context)
   manager = await openManagementPanel(context, extensionId)
   secondarySurface = await openStoragePanel(moduleFixtures.secondary.manifest.id)
   peerSurface = await openStoragePanel(moduleFixtures.storagePeer.manifest.id)
@@ -2017,7 +2043,7 @@ test('storage.module keeps CAS documents, lifecycle and two installed namespaces
   expect(await manager.evaluate(async () => {
     const stored = await chrome.storage.local.get(null)
     return Object.fromEntries(Object.entries(stored).filter(([key]) => (
-      key !== 'oneweb.modules.v1' && !key.startsWith('oneweb.remote-storage.v1:')
+      key !== 'oneweb.modules.v1' && key !== 'oneweb.workspace.v1' && !key.startsWith('oneweb.remote-storage.v1:')
     )))
   })).toEqual(stableStorageBefore)
   expect(await hasFixtureOriginPermission(manager, moduleFixtures.primary.manifestUrl)).toBe(true)
@@ -2035,7 +2061,7 @@ test('module management protects seeds and applies lifecycle changes through the
   await page.goto('https://github.com/vuejs/core', { waitUntil: 'domcontentloaded' })
   const panel = await context.newPage()
   await panel.setViewportSize({ width: 420, height: 900 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.juck.repolens`)
   await page.bringToFront()
   await expect(panel.locator('.bridge-state')).toHaveAttribute('data-ready', 'true', { timeout: 15_000 })
 
@@ -2071,7 +2097,7 @@ test('module management protects seeds and applies lifecycle changes through the
   await expect(panel.locator('.bridge-state')).toHaveAttribute('data-ready', 'true', { timeout: 15_000 })
   await expect(panel.frameLocator('[data-testid="oneweb-module-frame"]').locator('#repo')).toHaveText('vuejs/core')
 
-  await panel.evaluate(async () => {
+  await panel.evaluate(async (repolensOrigin) => {
     interface StoredModule {
       manifest: Record<string, unknown>
       [key: string]: unknown
@@ -2093,13 +2119,13 @@ test('module management protects seeds and applies lifecycle changes through the
             description: 'User module removal fixture',
           },
           source: 'user',
-          sourceUrl: 'http://127.0.0.1:4747/.well-known/oneweb-module.json',
+          sourceUrl: `${repolensOrigin}/.well-known/oneweb-module.json`,
           installedAt: timestamp,
           updatedAt: timestamp,
         },
       ],
     })
-  })
+  }, repolensFixtureOrigin)
 
   await panel.getByTestId('manage-modules').click()
   const userCard = panel.locator('[data-testid="module-card"][data-module-id="dev.juck.fixture"]')
@@ -2146,6 +2172,7 @@ test('Browser Journal records only one explicit memory session and survives no w
     bookmarks: await panel.evaluate(() => chrome.permissions.contains({ permissions: ['bookmarks'] })),
   }
 
+  await openTool(panel, 'dev.oneweb.browser-journal')
   let journalCard = panel.locator(
     '[data-testid="module-card"][data-module-id="dev.oneweb.browser-journal"]',
   )
@@ -2186,8 +2213,8 @@ test('Browser Journal records only one explicit memory session and survives no w
   await observed.goto(`${primaryOrigin}/journal-after-stop-marker`)
   await observed.waitForTimeout(200)
   await panel.bringToFront()
-  await panel.getByTestId('close-module-manager').click()
-  await panel.getByTestId('manage-modules').click()
+  await panel.locator('[data-destination="settings"]').click()
+  await openTool(panel, 'dev.oneweb.browser-journal')
   journalCard = panel.locator(
     '[data-testid="module-card"][data-module-id="dev.oneweb.browser-journal"]',
   )
@@ -2201,10 +2228,9 @@ test('Browser Journal records only one explicit memory session and survives no w
   expect(await hasFixtureOriginPermission(panel, moduleFixtures.secondary.manifestUrl)).toBe(originPermissionsBefore.secondary)
   expect(await panel.evaluate(() => chrome.permissions.contains({ permissions: ['bookmarks'] }))).toBe(originPermissionsBefore.bookmarks)
 
-  const background = context.serviceWorkers()[0]
-  await background.evaluate(() => chrome.runtime.reload()).catch(() => undefined)
-  await new Promise(resolve => setTimeout(resolve, 500))
+  await restartExtensionBackground(context)
   panel = await openManagementPanel(context, extensionId)
+  await openTool(panel, 'dev.oneweb.browser-journal')
   journalCard = panel.locator(
     '[data-testid="module-card"][data-module-id="dev.oneweb.browser-journal"]',
   )
@@ -2244,6 +2270,7 @@ test('Browser Journal saves only on request, survives restart and deletes retain
     secondary: await hasFixtureOriginPermission(panel, moduleFixtures.secondary.manifestUrl),
   }
 
+  await openTool(panel, 'dev.oneweb.browser-journal')
   let journalCard = panel.locator(
     '[data-testid="module-card"][data-module-id="dev.oneweb.browser-journal"]',
   )
@@ -2278,10 +2305,9 @@ test('Browser Journal saves only on request, survives restart and deletes retain
   expect(JSON.stringify(storedArchive)).not.toContain('tabId')
   expect(JSON.stringify(storedArchive)).not.toContain('windowId')
 
-  const background = context.serviceWorkers()[0]
-  await background.evaluate(() => chrome.runtime.reload()).catch(() => undefined)
-  await new Promise(resolve => setTimeout(resolve, 500))
+  await restartExtensionBackground(context)
   panel = await openManagementPanel(context, extensionId)
+  await openTool(panel, 'dev.oneweb.browser-journal')
   journalCard = panel.locator(
     '[data-testid="module-card"][data-module-id="dev.oneweb.browser-journal"]',
   )
@@ -2316,10 +2342,9 @@ test('Browser Journal saves only on request, survives restart and deletes retain
   await expect(detail).toContainText('journal-memory-only-marker')
   await expect(detail).not.toContainText('journal-second-marker')
 
-  const restartedBackground = context.serviceWorkers()[0]
-  await restartedBackground.evaluate(() => chrome.runtime.reload()).catch(() => undefined)
-  await new Promise(resolve => setTimeout(resolve, 500))
+  await restartExtensionBackground(context)
   panel = await openManagementPanel(context, extensionId)
+  await openTool(panel, 'dev.oneweb.browser-journal')
   journalCard = panel.locator(
     '[data-testid="module-card"][data-module-id="dev.oneweb.browser-journal"]',
   )
@@ -2327,13 +2352,17 @@ test('Browser Journal saves only on request, survives restart and deletes retain
   await expect(journalCard.getByTestId('browser-journal-saved-session-choice').first()).toHaveAttribute('aria-pressed', 'true')
   await expect(journalCard.getByTestId('browser-journal-saved-session')).toContainText('journal-second-marker')
 
-  await journalCard.locator(
+  const restoredFirstChoice = journalCard.locator(
     `[data-testid="browser-journal-saved-session-choice"][data-saved-session-id="${firstSavedSession.id}"]`,
-  ).click()
+  )
+  await restoredFirstChoice.click()
+  await expect(restoredFirstChoice).toHaveAttribute('aria-pressed', 'true')
+  const restoredDetail = journalCard.getByTestId('browser-journal-saved-session')
+  await expect(restoredDetail).toContainText('journal-memory-only-marker')
   await journalCard.getByTestId('browser-journal-delete-saved').click()
   await expect(journalCard.getByTestId('browser-journal-saved-session-choice')).toHaveCount(1)
-  await expect(journalCard.getByTestId('browser-journal-saved-session')).toContainText('journal-second-marker')
-  await expect(journalCard.getByTestId('browser-journal-saved-session')).not.toContainText('journal-memory-only-marker')
+  await expect(restoredDetail).toContainText('journal-second-marker')
+  await expect(restoredDetail).not.toContainText('journal-memory-only-marker')
   expect((await panel.evaluate(async key => (await chrome.storage.local.get(key))[key], journalStorageKey)).sessions).toHaveLength(1)
 
   await journalCard.getByTestId('module-toggle').click()
@@ -2665,6 +2694,7 @@ test('Clash Control passes the complete principal, permission and secret isolati
     moduleFixtures.secondary.manifest.id,
   )
 
+  await openTool(panel, 'dev.oneweb.bookmark-doctor')
   const bookmarkCard = panel.locator(
     '[data-testid="module-card"][data-module-id="dev.oneweb.bookmark-doctor"]',
   )
@@ -2673,6 +2703,7 @@ test('Clash Control passes the complete principal, permission and secret isolati
   await bookmarkCard.getByTestId('bookmark-authorize').click()
   await expect(bookmarkCard.getByTestId('bookmark-prepare')).toBeVisible()
   expect(await panel.evaluate(() => chrome.permissions.contains({ permissions: ['bookmarks'] }))).toBe(true)
+  await panel.locator('[data-destination="settings"]').click()
 
   moduleFixtures.primary.setManifest({
     ...moduleFixtures.primary.manifest,
@@ -2735,6 +2766,7 @@ test('Clash Control passes the complete principal, permission and secret isolati
     value: bookmarkStateBefore,
   })
 
+  await openTool(panel, 'dev.oneweb.clash-control')
   let clashCard = panel.locator(
     '[data-testid="module-card"][data-module-id="dev.oneweb.clash-control"]',
   )
@@ -2826,7 +2858,9 @@ test('Clash Control passes the complete principal, permission and secret isolati
   expect(frameUrls).not.toContain(moduleFixtures.secondary.manifest.entry_url)
   expect(consoleMessages.join('\n')).not.toContain(clashControllerFixture.secret)
 
-  const remoteFrame = panel.frameLocator('[data-testid="oneweb-module-frame"]')
+  const remotePanel = await context.newPage()
+  await remotePanel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.juck.repolens`)
+  const remoteFrame = remotePanel.frameLocator('[data-testid="oneweb-module-frame"]')
   expect(await remoteFrame.locator('body').evaluate((_body, secret) => ({
     hasExtensionRuntime: Boolean(globalThis.chrome?.runtime),
     hasExtensionStorage: Boolean(globalThis.chrome?.storage),
@@ -2836,6 +2870,7 @@ test('Clash Control passes the complete principal, permission and secret isolati
     hasExtensionStorage: false,
     containsSecret: false,
   })
+  await remotePanel.close()
 
   const profileBeforeRestart = await panel.evaluate(async () => (
     chrome.storage.local.get('oneweb.clash-control.profile.v1')
@@ -2848,11 +2883,10 @@ test('Clash Control passes the complete principal, permission and secret isolati
   })
   expect(JSON.stringify(profileBeforeRestart)).not.toContain(clashControllerFixture.secret)
 
-  const background = context.serviceWorkers()[0]
-  await background.evaluate(() => chrome.runtime.reload()).catch(() => undefined)
-  await new Promise(resolve => setTimeout(resolve, 500))
+  await restartExtensionBackground(context)
   panel = await openManagementPanel(context, extensionId)
   panel.on('console', message => consoleMessages.push(message.text()))
+  await openTool(panel, 'dev.oneweb.clash-control')
   clashCard = panel.locator(
     '[data-testid="module-card"][data-module-id="dev.oneweb.clash-control"]',
   )
@@ -2930,6 +2964,7 @@ test('Clash Control rejects stale races and recovers ambiguous writes only after
   const panel = await openManagementPanel(context, extensionId)
   await installFixtureModule(panel, moduleFixtures.primary.manifestUrl, moduleFixtures.primary.manifest.id)
   await installFixtureModule(panel, moduleFixtures.secondary.manifestUrl, moduleFixtures.secondary.manifest.id)
+  await openTool(panel, 'dev.oneweb.bookmark-doctor')
   const bookmarkCard = panel.locator(
     '[data-testid="module-card"][data-module-id="dev.oneweb.bookmark-doctor"]',
   )
@@ -2948,6 +2983,7 @@ test('Clash Control rejects stale races and recovers ambiguous writes only after
   ])))
   const stateModuleIds = [...isolatedModuleIds, 'dev.oneweb.clash-control']
   const localStateBefore = await seedModuleLocalState(panel, stateModuleIds)
+  await openTool(panel, 'dev.oneweb.clash-control')
   const clashCard = panel.locator(
     '[data-testid="module-card"][data-module-id="dev.oneweb.clash-control"]',
   )
@@ -3046,6 +3082,7 @@ test('Bookmark Doctor scans real bookmarks with bounded work, stop and module is
     secondary: await readStoredModule(panel, moduleFixtures.secondary.manifest.id),
   }
 
+  await openTool(panel, 'dev.oneweb.bookmark-doctor')
   const bookmarkCard = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.bookmark-doctor"]')
   await bookmarkCard.getByTestId('module-toggle').click()
   await expect(bookmarkCard.getByTestId('module-toggle')).toHaveAttribute('aria-checked', 'true')
@@ -3149,6 +3186,7 @@ test('Bookmark Doctor reviews safe repairs, rejects stale targets and isolates r
   }
   const isolatedModuleIds = ['dev.juck.repolens', moduleFixtures.primary.manifest.id, moduleFixtures.secondary.manifest.id]
   const moduleStateBefore = await seedModuleLocalState(panel, isolatedModuleIds)
+  await openTool(panel, 'dev.oneweb.bookmark-doctor')
   const bookmarkCard = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.bookmark-doctor"]')
   await bookmarkCard.getByTestId('module-toggle').click()
   await bookmarkCard.getByTestId('bookmark-authorize').click()

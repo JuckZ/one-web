@@ -84,6 +84,12 @@ Cookie Manager 停用清除自己的瞬态权力，不删除浏览器 Cookie。�
 后台枚举产生不透明 snapshot ID 和条目 ID。修改、删除、导出使用最新 snapshot 中的条目，
 不把 UI 传来的任意 URL、store、domain 或浏览器方法当成删除权限。每次修改前重新核对
 Cookie 当前状态；网站已更新值或其他编辑器已更改数据时返回 `stale-cookie`，先刷新再操作。
+刷新期间关闭原 snapshot，必须同时取消该会话的待完成读取与迟到结果；已发布但管理页尚未
+消费的新 snapshot 也必须可由这次关闭撤销。首次 open 发布后仍保留 preparation token 的
+关闭权，直到管理页用新 snapshot 发起刷新。后台为每条会话最多保留一个交付关闭句柄，
+下一次使用新 snapshot 发起刷新即确认接收并替换为该 snapshot 的前驱句柄；过期与
+invalidate 清除句柄。
+关闭/过期后不得继续枚举后续 store，不得用全局 invalidate 取消其他管理会话。
 这只是冲突检测，浏览器 API 不提供 Cookie CAS，不能保证检测和写入之间绝无网站竞争。
 
 `cookies.remove` 按 URL/name 自动选择同名 Cookie，并不接受精确 path/domain 主键。

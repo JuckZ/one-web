@@ -142,7 +142,6 @@ function normalizeTask(input: unknown): SendToOpenListTaskSummaryV1 | null {
     || typeof progress !== 'number'
     || !Number.isFinite(progress)
     || progress < 0
-    || progress > 100
     || !Number.isSafeInteger(totalBytes)
     || Number(totalBytes) < 0
     || !boundedText(error, SEND_TO_OPENLIST_MAX_UPSTREAM_MESSAGE_BYTES, true)) {
@@ -153,7 +152,8 @@ function normalizeTask(input: unknown): SendToOpenListTaskSummaryV1 | null {
     name,
     state: Number(state),
     status,
-    progress,
+    // Real downloader accounting can exceed 100%; the projected display stays bounded.
+    progress: Math.min(progress, 100),
     totalBytes: Number(totalBytes),
     error,
   })

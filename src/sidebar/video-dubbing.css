@@ -1,0 +1,51 @@
+.video-dubbing-panel {
+  display: grid;
+  gap: 12px;
+  color: var(--text-primary, #243247);
+  font-size: 13px;
+}
+.video-dubbing-panel h3,
+.video-dubbing-panel p {
+  margin: 0;
+}
+.video-dubbing-panel details,
+.video-dubbing-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.video-dubbing-panel details[open] {
+  display: flex;
+}
+.video-dubbing-panel summary {
+  width: 100%;
+  cursor: pointer;
+  font-weight: 600;
+  padding-block: 8px;
+}
+.video-dubbing-panel label {
+  display: grid;
+  width: 100%;
+  gap: 4px;
+  margin-block: 4px;
+}
+.video-dubbing-panel input,
+.video-dubbing-panel select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 7px;
+  background: var(--surface, #fff);
+  color: inherit;
+}
+.video-dubbing-panel input[type='range'] {
+  padding: 0;
+}
+.video-dubbing-panel button {
+  white-space: normal;
+}
+.video-dubbing-panel [data-state='error'] {
+  color: #b91c1c;
+}

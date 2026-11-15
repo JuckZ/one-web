@@ -31,9 +31,15 @@ const sdkRuntimeFiles = new Set([
   'storage-module.js',
 ])
 
-export const extensionPath = process.env.EXTENSION_PATH || path.join(currentDir, '../artifacts/chromium')
+export const extensionPath = path.resolve(process.env.EXTENSION_PATH || process.env.ONEWEB_EXTENSION_DIR || path.join(currentDir, '../extension'))
+const packagedManifest = fs.readJsonSync(path.join(extensionPath, 'manifest.json')) as { host_permissions: string[] }
+const fixturePattern = packagedManifest.host_permissions.find(pattern => /^http:\/\/127\.0\.0\.1:\d+\/\*$/.test(pattern))
+if (!fixturePattern)
+  throw new Error('Chromium E2E requires a production test build with a loopback RepoLens origin')
+export const repolensFixtureOrigin = fixturePattern.slice(0, -2)
 
 interface ExtensionFixtures {
+  extraHostOrigins: string[]
   cookieManagerAccess: boolean
   networkManagementAccess: boolean
   alistFixture: OpenListFixture
@@ -308,8 +314,8 @@ function renderCapabilityRpcIsolationHost(moduleFixtures: ExtensionFixtures['mod
     'window.__rpcHost={forge(key){const slot=slots.get(key);if(!slot||!slot.port||!slot.lastRequest)return false;const forged={...structuredClone(slot.lastRequest),type:"CAPABILITY_RESULT",moduleId:key==="alpha"?definitions.beta.moduleId:definitions.alpha.moduleId,result:{echoed:"forged"}};slot.port.postMessage(forged);return true},reload(key){const slot=slots.get(key);if(!slot)return false;cleanup(slot,true);slot.state.textContent="reloading";slot.frame.src=slot.frame.src;return true},replay(key){const slot=slots.get(key);if(!slot||!slot.dispatcher||!slot.staleRequest)return false;slot.dispatcher.dispatch(structuredClone(slot.staleRequest));return true},remove(key){const slot=slots.get(key);if(!slot)return false;cleanup(slot,true);slot.frame.remove();slot.state.textContent="removed";return true},info(key){const slot=slots.get(key);return slot?{moduleId:slot.moduleId,generation:slot.generation,aborts:slot.aborts,hasPort:Boolean(slot.port),lastRequestId:slot.lastRequest&&slot.lastRequest.requestId||null}:null}};',
     'window.addEventListener("pagehide",()=>{for(const slot of slots.values())cleanup(slot,true)},{once:true});',
   ].join('')
-  const alphaUrl = `${definitions.alpha.origin}/rpc-isolation-frame?parentOrigin=${encodeURIComponent('http://127.0.0.1:4747')}`
-  const betaUrl = `${definitions.beta.origin}/rpc-isolation-frame?parentOrigin=${encodeURIComponent('http://127.0.0.1:4747')}`
+  const alphaUrl = `${definitions.alpha.origin}/rpc-isolation-frame?parentOrigin=${encodeURIComponent(repolensFixtureOrigin)}`
+  const betaUrl = `${definitions.beta.origin}/rpc-isolation-frame?parentOrigin=${encodeURIComponent(repolensFixtureOrigin)}`
   return [
     '<!doctype html><html><head><meta charset="utf-8"><title>Dual RPC isolation host</title></head><body>',
     '<section><output id="alpha-state">waiting</output><output id="alpha-generation">0</output><output id="alpha-aborts">0</output>',
@@ -321,7 +327,7 @@ function renderCapabilityRpcIsolationHost(moduleFixtures: ExtensionFixtures['mod
 }
 
 async function startRepoLensFixture(moduleFixtures: ExtensionFixtures['moduleFixtures']) {
-  const sdkDistRoot = path.join(currentDir, '../packages/module-sdk/dist')
+  const sdkDistRoot = process.env.MODULE_SDK_DIST_PATH || path.join(currentDir, '../packages/module-sdk/dist')
   const dispatcherSource = ts.transpileModule(
     fs.readFileSync(path.join(currentDir, '../src/modules/capability-dispatcher.ts'), 'utf8'),
     {
@@ -343,7 +349,7 @@ async function startRepoLensFixture(moduleFixtures: ExtensionFixtures['moduleFix
       response.writeHead(404).end()
       return
     }
-    const url = new URL(request.url || '/', 'http://127.0.0.1:4747')
+    const url = new URL(request.url || '/', repolensFixtureOrigin)
     if (url.pathname.startsWith('/oneweb-sdk/')) {
       const file = url.pathname.slice('/oneweb-sdk/'.length)
       if (!sdkRuntimeFiles.has(file)) {
@@ -370,7 +376,7 @@ async function startRepoLensFixture(moduleFixtures: ExtensionFixtures['moduleFix
       response.writeHead(200, {
         'cache-control': 'no-store',
         'content-type': 'text/html; charset=utf-8',
-      }).end(renderCapabilityRpcHost('http://127.0.0.1:4747'))
+      }).end(renderCapabilityRpcHost(repolensFixtureOrigin))
       return
     }
     if (url.pathname === '/rpc-isolation-host') {
@@ -382,7 +388,7 @@ async function startRepoLensFixture(moduleFixtures: ExtensionFixtures['moduleFix
     }
     if (url.pathname === '/rpc-frame') {
       const parentOrigin = url.searchParams.get('parentOrigin') || ''
-      if (parentOrigin !== 'http://127.0.0.1:4747') {
+      if (parentOrigin !== repolensFixtureOrigin) {
         response.writeHead(403, { 'cache-control': 'no-store' }).end()
         return
       }
@@ -413,7 +419,7 @@ async function startRepoLensFixture(moduleFixtures: ExtensionFixtures['moduleFix
   })
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
-    server.listen(4747, '127.0.0.1', resolve)
+    server.listen(Number(new URL(repolensFixtureOrigin).port), '127.0.0.1', resolve)
   })
   return () => {
     server.closeAllConnections()
@@ -424,7 +430,7 @@ async function startRepoLensFixture(moduleFixtures: ExtensionFixtures['moduleFix
 }
 
 async function startRemoteModuleFixture(definition: RemoteModuleFixtureDefinition) {
-  const sdkDistRoot = path.join(currentDir, '../packages/module-sdk/dist')
+  const sdkDistRoot = process.env.MODULE_SDK_DIST_PATH || path.join(currentDir, '../packages/module-sdk/dist')
   const requests = { count: 0 }
   let manifest: RemoteFrameModuleManifest
   const server = createServer((request, response) => {
@@ -478,7 +484,7 @@ async function startRemoteModuleFixture(definition: RemoteModuleFixtureDefinitio
     }
     if (url.pathname === '/rpc-isolation-frame') {
       const parentOrigin = url.searchParams.get('parentOrigin') || ''
-      if (parentOrigin !== 'http://127.0.0.1:4747') {
+      if (parentOrigin !== repolensFixtureOrigin) {
         response.writeHead(403, { 'cache-control': 'no-store' }).end()
         return
       }
@@ -931,18 +937,31 @@ async function startOpenListFixture(kind: OpenListFixture['kind'] = 'openlist') 
 }
 
 export const test = base.extend<ExtensionFixtures>({
+  extraHostOrigins: [[], { option: true }],
   cookieManagerAccess: [false, { option: true }],
   networkManagementAccess: [false, { option: true }],
-  context: async ({ alistFixture, bookmarkProbeFixture, clashControllerFixture, cookieManagerAccess, networkManagementAccess, headless, moduleFixtures, openListFixture }, use) => {
+  context: async ({ alistFixture, bookmarkProbeFixture, clashControllerFixture, cookieManagerAccess, networkManagementAccess, extraHostOrigins, headless, moduleFixtures, openListFixture }, use) => {
     const closeRepoLensFixture = await startRepoLensFixture(moduleFixtures)
     const profileDir = await fs.mkdtemp(path.join(os.tmpdir(), 'oneweb-e2e-'))
+    let loadedExtensionPath = extensionPath
+    if (extraHostOrigins.includes('<all_urls>')) {
+      // Headless cannot click the browser toolbar to grant activeTab. Only the
+      // disposable pixel-pipeline fixture declares capture access; production
+      // source/manifest and the user's installed extension are never changed.
+      loadedExtensionPath = path.join(profileDir, 'capture-extension')
+      await fs.copy(extensionPath, loadedExtensionPath)
+      const manifestPath = path.join(loadedExtensionPath, 'manifest.json')
+      const manifest = await fs.readJson(manifestPath)
+      manifest.host_permissions = [...new Set([...(manifest.host_permissions ?? []), '<all_urls>'])]
+      await fs.writeJson(manifestPath, manifest)
+    }
+    const browserChannel = process.env.PW_BROWSER_CHANNEL || 'chromium'
     const launchOptions = {
       headless,
-      ...(process.env.PW_BROWSER_CHANNEL ? { channel: process.env.PW_BROWSER_CHANNEL as 'chrome' | 'msedge' } : {}),
+      channel: browserChannel,
       args: [
-        ...(headless ? ['--headless=new'] : []),
-        `--disable-extensions-except=${extensionPath}`,
-        `--load-extension=${extensionPath}`,
+        `--disable-extensions-except=${loadedExtensionPath}`,
+        `--load-extension=${loadedExtensionPath}`,
       ],
     }
     const bootstrap = await chromium.launchPersistentContext(profileDir, launchOptions)
@@ -963,7 +982,7 @@ export const test = base.extend<ExtensionFixtures>({
     fixtureOrigins.push(`${bookmarkProbeFixture.origin}/*`)
     fixtureOrigins.push(`${clashControllerFixture.origin}/*`)
     fixtureOrigins.push(`${openListFixture.origin}/*`)
-    fixtureOrigins.push(`${alistFixture.origin}/*`)
+    fixtureOrigins.push(`${alistFixture.origin}/*`, ...extraHostOrigins)
     if (cookieManagerAccess || networkManagementAccess)
       fixtureOrigins.push('http://*/*', 'https://*/*')
     for (const key of ['active_permissions', 'granted_permissions']) {

@@ -11,7 +11,8 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import Components from 'unplugin-vue-components/vite'
 import { defineConfig } from 'vite'
 import packageJson from './package.json'
-import { isDev, isFirefox, port, r } from './scripts/utils'
+import { resolveRepoLensOrigin } from './scripts/repolens-origin'
+import { e, isDev, isFirefox, port, r } from './scripts/utils'
 
 export const sharedConfig: UserConfig = {
   root: r('src'),
@@ -25,6 +26,7 @@ export const sharedConfig: UserConfig = {
     __DEV__: isDev,
     __FIREFOX__: isFirefox,
     __NAME__: JSON.stringify(packageJson.name),
+    __REPOLENS_ORIGIN__: JSON.stringify(resolveRepoLensOrigin()),
   },
   plugins: [
     Vue(),
@@ -34,9 +36,8 @@ export const sharedConfig: UserConfig = {
       imports: [
         'vue',
         {
-          'webextension-polyfill': [
-            // ['*', 'browser'],
-            ['=', 'browser'],
+          '~/platform/browser': [
+            ['default', 'browser'],
           ],
         },
         {
@@ -82,7 +83,6 @@ export const sharedConfig: UserConfig = {
     include: [
       'vue',
       '@vueuse/core',
-      'webextension-polyfill',
     ],
     exclude: [
       'vue-demi',
@@ -112,7 +112,7 @@ export default defineConfig(({ command }) => ({
     watch: isDev
       ? {}
       : undefined,
-    outDir: r('extension/dist'),
+    outDir: e('dist'),
     emptyOutDir: false,
     sourcemap: isDev ? 'inline' : false,
     // https://developer.chrome.com/docs/webstore/program_policies/#:~:text=Code%20Readability%20Requirements

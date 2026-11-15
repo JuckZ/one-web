@@ -72,6 +72,13 @@ The source, rather than an generated example, is authoritative where the two dis
   add response with an empty `tasks` array is therefore accepted-without-task-id, not a protocol
   failure.
 
+Local real-server acceptance on 2026-11-15 additionally observed a successful OpenList v4.2.6
+SimpleHttp task with progress `100.51533742331289` for a 16 KiB resource. Progress is untrusted
+display data: accept finite nonnegative upstream values and clamp the normalized percentage to 100. Negative, NaN and infinite values still fail validation; task state/identity, quotas and
+cancellation authority remain independent of this projection. The observation, regression and
+isolated OpenList/AList results are recorded in the
+[local acceptance checkpoint](../checkpoints/local-acceptance-20261115.md).
+
 The generated examples found during discovery included a `Bearer` example and an older hard-coded
 tool list. Both are rejected as compatibility contracts because the current pinned middleware and
 tool registry demonstrate different behavior.

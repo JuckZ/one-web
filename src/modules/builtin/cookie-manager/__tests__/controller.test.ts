@@ -46,7 +46,7 @@ function fixture(firefox = false) {
   let permitted = false
   let reads = 0
   let now = Date.now()
-  let afterRead: (() => void) | undefined
+  let afterRead: (() => void | Promise<void>) | undefined
   let afterGet: (() => void) | undefined
   let allowedHost: string | undefined
   let url = 'https://example.com/account'
@@ -74,7 +74,7 @@ function fixture(firefox = false) {
       getAllCookieStores: async () => [{ id: '0' }, { id: 'container-2' }],
       getAll: async ({ storeId }) => {
         reads++
-        afterRead?.()
+        await afterRead?.()
         return structuredClone(rows.filter(row => row.storeId === storeId))
       },
       get: async (details: CookieDetails) => {
@@ -127,7 +127,7 @@ function fixture(firefox = false) {
     onlyHost: (host: string) => {
       allowedHost = host
     },
-    afterRead: (callback: () => void) => {
+    afterRead: (callback: () => void | Promise<void>) => {
       afterRead = callback
     },
     afterGet: (callback: () => void) => {
@@ -558,6 +558,106 @@ it('retains overlapping shared host grants only while its management session is 
     throw new Error('Expected snapshot')
   expect(await f.controller.usesOriginPattern('http://localhost:8080/*')).toBe(true)
   f.controller.close(opened.value.id)
+  expect(await f.controller.usesOriginPattern('https://example.com/*')).toBe(false)
+})
+
+async function openManagement(f: ReturnType<typeof fixture>) {
+  const preparation = await f.controller.prepare('current')
+  if (!preparation.ok)
+    throw new Error('Expected preparation')
+  const opened = await f.controller.open(preparation.value.token)
+  if (!opened.ok)
+    throw new Error('Expected snapshot')
+  return opened.value
+}
+
+it('closing an initial preparation revokes its unconsumed snapshot and preview without revoking a peer', async () => {
+  const f = fixture()
+  f.permit()
+  const preparation = await f.controller.prepare('current')
+  if (!preparation.ok)
+    throw new Error('Expected preparation')
+  const opened = await f.controller.open(preparation.value.token)
+  if (!opened.ok)
+    throw new Error('Expected snapshot')
+  const preview = await f.controller.preview(opened.value.id, JSON.stringify([{ ...cookie, name: 'new-cookie' }]), '0')
+  if (!preview.ok)
+    throw new Error('Expected preview')
+  const peer = await openManagement(f)
+  f.controller.close(preparation.value.token)
+  expect((await f.controller.export(opened.value.id, [opened.value.entries[0].id])).ok).toBe(false)
+  expect(await f.controller.import(opened.value.id, preview.value.id, [preview.value.entries[0].id]))
+    .toEqual({ ok: false, reason: 'lifecycle-cancelled' })
+  expect((await f.controller.export(peer.id, [peer.entries[0].id])).ok).toBe(true)
+  expect(await f.controller.usesOriginPattern('https://example.com/*')).toBe(true)
+  f.controller.close(peer.id)
+  expect(await f.controller.usesOriginPattern('https://example.com/*')).toBe(false)
+})
+
+it('closing during a delayed refresh cancels its result and releases its origin authority', async () => {
+  const f = fixture()
+  f.permit()
+  const snapshot = await openManagement(f)
+  const initialReads = f.reads()
+  let release!: () => void
+  let started!: () => void
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const reading = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  f.afterRead(async () => {
+    started()
+    await blocked
+  })
+  const refresh = f.controller.refresh(snapshot.id)
+  await reading
+  f.controller.close(snapshot.id)
+  release()
+  expect(await refresh).toEqual({ ok: false, reason: 'lifecycle-cancelled' })
+  expect(f.reads()).toBe(initialReads + 1)
+  expect(await f.controller.usesOriginPattern('https://example.com/*')).toBe(false)
+  expect((await f.controller.export(snapshot.id, [snapshot.entries[0].id])).ok).toBe(false)
+})
+
+it('closing the prior snapshot revokes a published refresh whose response has not been consumed', async () => {
+  const f = fixture()
+  f.permit()
+  const snapshot = await openManagement(f)
+  const refresh = await f.controller.refresh(snapshot.id)
+  if (!refresh.ok)
+    throw new Error('Expected refreshed snapshot')
+  f.controller.close(snapshot.id)
+  expect((await f.controller.export(refresh.value.id, [refresh.value.entries[0].id])).ok).toBe(false)
+  expect(await f.controller.usesOriginPattern('https://example.com/*')).toBe(false)
+})
+
+it('refresh cancellation does not revoke a peer management session or its cookie snapshot', async () => {
+  const f = fixture()
+  f.permit()
+  const snapshot = await openManagement(f)
+  const peer = await openManagement(f)
+  let release!: () => void
+  let started!: () => void
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const reading = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  f.afterRead(async () => {
+    started()
+    await blocked
+  })
+  const refresh = f.controller.refresh(snapshot.id)
+  await reading
+  f.controller.close(snapshot.id)
+  release()
+  expect(await refresh).toEqual({ ok: false, reason: 'lifecycle-cancelled' })
+  expect((await f.controller.export(peer.id, [peer.entries[0].id])).ok).toBe(true)
+  expect(await f.controller.usesOriginPattern('https://example.com/*')).toBe(true)
+  f.controller.close(peer.id)
   expect(await f.controller.usesOriginPattern('https://example.com/*')).toBe(false)
 })
 

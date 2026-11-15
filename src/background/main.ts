@@ -1,4 +1,8 @@
 import type { Runtime } from 'webextension-polyfill'
+import { PAGE_CHANNEL } from '~/assistantContent/runtime'
+import { ASSISTANT_PORT } from '~/modules/builtin/assistant/contracts'
+import { AssistantController } from '~/modules/builtin/assistant/controller'
+import { handleAssistantMessage } from '~/modules/builtin/assistant/protocol'
 import {
   BookmarkDoctorController,
   BookmarkDoctorReader,
@@ -50,6 +54,12 @@ import {
   type SendToOpenListDiscoveryScriptingBoundary,
   type SendToOpenListDiscoveryTab,
 } from '~/modules/builtin/send-to-openlist'
+import { DUBBING_PORT, VIDEO_DUBBING_MODULE_ID } from '~/modules/builtin/video-dubbing/contracts'
+import { VideoDubbingController } from '~/modules/builtin/video-dubbing/controller'
+import type { DubbingPort } from '~/modules/builtin/video-dubbing/controller'
+import { createDubbingInjection } from '~/modules/builtin/video-dubbing/injection'
+import type { DubbingScripting } from '~/modules/builtin/video-dubbing/injection'
+import { handleDubbingMessage } from '~/modules/builtin/video-dubbing/protocol'
 import { type ContextSnapshot, createDefaultContextBroker } from '~/modules/context-broker'
 import {
   createContextSnapshotMessage,
@@ -65,10 +75,76 @@ import { ModuleManager } from '~/modules/manager'
 import { StorageModuleAdapter } from '~/modules/storage-module-adapter'
 import { StorageModuleController } from '~/modules/storage-module-controller'
 import { validateStorageModuleProtocolRequest } from '~/modules/storage-module-protocol'
+import { handlePageActionMessage, PageActionController } from '~/workspace/page-actions'
+import { handlePageContextMessage, PageContextController } from '~/workspace/page-context'
+import { createPageContextInjection, type PageScripting } from '~/workspace/page-injection'
+import { VideoReadingController } from '~/workspace/video-reading'
+import { VisionController } from '~/workspace/vision'
+import { configureChromiumActionEntry } from './browser-action-entry'
 import { getNetworkPrivacy } from './network-privacy'
 
 const contextBroker = createDefaultContextBroker()
 const builtinOriginUsage = new BuiltinExactOriginUsageCoordinator()
+let assistantController: AssistantController
+const assistantInjection = createPageContextInjection((browser as unknown as { scripting: PageScripting }).scripting, browser.tabs)
+const pageContextController = new PageContextController({
+  tabs: browser.tabs,
+  permissions: browser.permissions,
+  injection: assistantInjection,
+  get assistant() { return assistantController },
+  fallbackPage: async () => (await browser.tabs.query({ currentWindow: true }))
+    .filter(tab => /^https?:\/\//.test(tab.url ?? ''))
+    .sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))[0],
+})
+const sessionEntries: Record<string, unknown> = {}
+assistantController = new AssistantController({
+  storage: browser.storage.local,
+  secrets: browser.storage.session ?? {
+    get: async key => ({ [key]: sessionEntries[key] }),
+    set: async (values) => { Object.assign(sessionEntries, values) },
+  },
+  permissions: browser.permissions,
+  resolveAttachment: (token, owner) => pageContextController.resolveAttachment(token, owner),
+})
+const videoReadingController = new VideoReadingController({
+  page: pageContextController,
+  permissions: browser.permissions,
+  injection: assistantInjection,
+  assistant: assistantController,
+  discovery: createDubbingInjection((browser as unknown as { scripting: DubbingScripting }).scripting, browser.tabs),
+})
+const visionController = new VisionController({
+  storage: browser.storage.local,
+  secrets: browser.storage.session ?? {
+    get: async key => ({ [key]: sessionEntries[key] }),
+    set: async (values) => { Object.assign(sessionEntries, values) },
+  },
+  tabs: browser.tabs,
+  permissions: browser.permissions,
+  injection: assistantInjection,
+})
+const pageActionController = new PageActionController({
+  storage: browser.storage.local,
+  permissions: browser.permissions,
+  injection: assistantInjection,
+  pageContext: pageContextController,
+  assistant: assistantController,
+  openWorkspace: token => browser.tabs.create({ url: `${browser.runtime.getURL('/dist/sidebar/index.html')}?handoff=${encodeURIComponent(token)}` }),
+  openTool: moduleId => browser.tabs.create({ url: `${browser.runtime.getURL('/dist/sidebar/index.html')}?moduleId=${encodeURIComponent(moduleId)}` }),
+  openWeb: url => browser.tabs.create({ url }),
+  video: videoReadingController,
+  vision: visionController,
+})
+for (const area of [browser.storage.local, browser.storage.session]) {
+  const trusted = area as typeof area & { setAccessLevel?: (_options: { accessLevel: 'TRUSTED_CONTEXTS' }) => Promise<void> }
+  void trusted?.setAccessLevel?.({ accessLevel: 'TRUSTED_CONTEXTS' })
+}
+builtinOriginUsage.register('assistant', pattern => assistantController.usesOriginPattern(pattern))
+builtinOriginUsage.register('vision', pattern => visionController.usesOriginPattern(pattern))
+builtinOriginUsage.register('page-assistant', async (pattern) => {
+  const preferences = await pageActionController.readPreferences()
+  return preferences.enabled && preferences.sites.some(site => site.enabled && `${site.origin}/*` === pattern)
+})
 const moduleInstaller = new ModuleInstaller({
   registry: defaultModuleRegistry,
   permissions: browser.permissions,
@@ -165,8 +241,20 @@ builtinOriginUsage.register('cookie-manager', originPattern => cookieManagerCont
 bookmarkDoctorController.setOriginInUse(
   originPattern => builtinOriginUsage.usedByAnother('bookmark-doctor', originPattern),
 )
+const videoDubbingController = new VideoDubbingController({
+  extensionId: browser.runtime.id,
+  registry: defaultModuleRegistry,
+  storage: browser.storage.local,
+  tabs: browser.tabs,
+  permissions: browser.permissions,
+  injection: createDubbingInjection((browser as unknown as { scripting: DubbingScripting }).scripting, browser.tabs),
+  originInUse: pattern => builtinOriginUsage.usedByAnother('video-dubbing', pattern),
+})
+builtinOriginUsage.register('video-dubbing', pattern => videoDubbingController.usesOriginPattern(pattern))
 const moduleManager = new ModuleManager(defaultModuleRegistry, moduleInstaller, {
   onInstalledRecordChanged: async (record) => {
+    if (record.manifest.id === VIDEO_DUBBING_MODULE_ID)
+      videoDubbingController.invalidate()
     if (record.manifest.id === COOKIE_MANAGER_MODULE_ID)
       cookieManagerController.invalidate()
     await storageModuleAdapter.handleInstalledRecordChanged(record.manifest.id)
@@ -184,6 +272,11 @@ const moduleManager = new ModuleManager(defaultModuleRegistry, moduleInstaller, 
   onInstalledRecordRemoved: record => storageModuleAdapter.removeInstalledRecord(record.manifest.id),
 })
 const extensionBaseUrl = browser.runtime.getURL('/')
+let currentWindowId: number | undefined
+void browser.windows.getCurrent().then((window) => {
+  currentWindowId = window.id
+}).catch(() => {
+})
 
 void initializeDefaultModuleRegistry()
   .then(async () => {
@@ -226,6 +319,18 @@ browser.runtime.onMessage.addListener((message: unknown, sender: Runtime.Message
   const networkResponse = handleNetworkManagementMessage(networkManagementController, message, sender, browser.runtime.id, extensionBaseUrl)
   if (networkResponse)
     return networkResponse
+  const pageActionResponse = handlePageActionMessage(pageActionController, message, sender, browser.runtime.id, extensionBaseUrl)
+  if (pageActionResponse)
+    return pageActionResponse
+  const assistantResponse = handleAssistantMessage(assistantController, message, sender, browser.runtime.id, extensionBaseUrl)
+  if (assistantResponse)
+    return assistantResponse
+  const pageResponse = handlePageContextMessage(pageContextController, message, sender, browser.runtime.id, extensionBaseUrl)
+  if (pageResponse)
+    return pageResponse
+  const dubbingResponse = handleDubbingMessage(videoDubbingController, message, sender, browser.runtime.id, extensionBaseUrl)
+  if (dubbingResponse)
+    return dubbingResponse
   const cookieResponse = handleCookieManagerMessage(
     cookieManagerController,
     message,
@@ -565,17 +670,59 @@ browser.runtime.onMessage.addListener((message: unknown, sender: Runtime.Message
 })
 
 browser.runtime.onConnect.addListener((port) => {
+  if (port.name === ASSISTANT_PORT) {
+    if (!port.sender || !isTrustedModuleManagementSender(port.sender, browser.runtime.id, extensionBaseUrl)) {
+      port.disconnect()
+      return
+    }
+    const owner = port.sender.documentId ?? port.sender.url!
+    port.onDisconnect.addListener(() => {
+      assistantController.cancelOwner(owner)
+      void pageContextController.restorePage(owner)
+    })
+    return
+  }
+  if (port.name === DUBBING_PORT) {
+    void videoDubbingController.acceptPort(port as unknown as DubbingPort).catch(() => port.disconnect())
+    return
+  }
   pageToolboxController.acceptPort(port as unknown as PageToolboxHostPort)
 })
 
 browser.contextMenus.onClicked.addListener((info, tab) => {
+  const actions: Record<string, 'chat' | 'translate' | 'explain' | 'summarize'> = {
+    'oneweb-ask-selection': 'chat',
+    'oneweb-translate-selection': 'translate',
+    'oneweb-explain-selection': 'explain',
+    'oneweb-summarize-page': 'summarize',
+  }
+  const intent = actions[String(info.menuItemId)]
+  if (intent) {
+    void (async () => {
+      if (intent === 'summarize') {
+        const attachment = await pageContextController.captureCurrentPage('browser-context-menu')
+        await pageActionController.openDraft(attachment.text, intent)
+      }
+      else {
+        await pageActionController.openDraft(info.selectionText ?? '', intent)
+      }
+    })().catch(() => browser.tabs.create({ url: browser.runtime.getURL('/dist/sidebar/index.html') }))
+    return
+  }
   void sendToOpenListContextMenus.handleClick(
     info as unknown as SendToOpenListContextMenuInfo,
     tab as SendToOpenListDiscoveryTab | undefined,
   )
 })
 
-browser.tabs.onActivated.addListener(async () => {
+browser.tabs.onActivated.addListener(async (info) => {
+  currentWindowId = info.windowId
+  await pageActionController.deactivateOthers(info.tabId)
+  assistantController.invalidatePage()
+  videoReadingController.invalidate()
+  visionController.invalidate()
+  await pageContextController.invalidate()
+  await pageActionController.syncActive().catch(() => {})
   const active = await activeTabContext()
   if (active)
     await broadcastContext(active)
@@ -584,6 +731,15 @@ browser.tabs.onActivated.addListener(async () => {
 // Firefox MV3 event pages may be suspended between messages. URL updates provide a
 // navigation-level fallback; the content script remains responsible for SPA signals.
 browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.url || changeInfo.status === 'loading')
+    videoDubbingController.invalidate(tabId)
+  if (changeInfo.url || changeInfo.status === 'loading') {
+    assistantController.invalidatePage(tabId)
+    void pageContextController.invalidate(tabId)
+    void pageActionController.invalidateTab(tabId, true)
+  }
+  if (changeInfo.status === 'complete')
+    void pageActionController.syncActive().catch(() => {})
   pageToolboxController.handleTabUpdated(tabId, changeInfo)
   const href = changeInfo.url || (changeInfo.status === 'complete' ? tab.url : undefined)
   if (href)
@@ -591,11 +747,26 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 })
 
 browser.tabs.onRemoved.addListener((tabId) => {
+  assistantController.invalidatePage(tabId)
+  void pageContextController.invalidate(tabId)
+  void pageActionController.invalidateTab(tabId, true)
+  videoDubbingController.invalidate(tabId)
   contextBroker.remove(tabId)
   pageToolboxController.handleTabRemoved(tabId)
 })
 
 browser.permissions.onRemoved.addListener((permissions) => {
+  void assistantController.permissionsChanged()
+  void pageActionController.permissionsChanged()
+  if (permissions.origins?.length) {
+    assistantController.invalidatePage()
+    void pageContextController.invalidate()
+    // Also release retained runtimes unknown to a freshly restarted worker.
+    void browser.tabs.query({}).then(tabs => Promise.allSettled(tabs
+      .filter(tab => tab.id !== undefined && /^https?:\/\//.test(tab.url ?? ''))
+      .map(tab => browser.tabs.sendMessage(tab.id!, { channel: PAGE_CHANNEL, command: 'dispose' }, { frameId: 0 }))))
+  }
+  void videoDubbingController.permissionsChanged()
   if (permissions.permissions?.includes('cookies') || permissions.origins?.length)
     cookieManagerController.invalidate()
   browserJournalController.handlePermissionsRemoved(permissions)
@@ -606,6 +777,40 @@ browser.permissions.onRemoved.addListener((permissions) => {
   void sendToOpenListController.handlePermissionsRemoved(permissions)
 })
 
-if (!__FIREFOX__ && typeof chrome !== 'undefined' && chrome.sidePanel?.setPanelBehavior) {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined)
+if (!__FIREFOX__) {
+  configureChromiumActionEntry({
+    action: browser.action,
+    runtime: browser.runtime,
+    sidePanel: typeof chrome === 'undefined' ? undefined : chrome.sidePanel,
+    tabs: browser.tabs,
+  })
 }
+
+for (const [id, title, contexts] of [
+  ['oneweb-ask-selection', '在 OneWeb 中提问', ['selection']],
+  ['oneweb-translate-selection', '用 OneWeb 翻译选文', ['selection']],
+  ['oneweb-explain-selection', '用 OneWeb 解释选文', ['selection']],
+  ['oneweb-summarize-page', '用 OneWeb 总结当前网页', ['page']],
+] as const) {
+  void browser.contextMenus.remove(id).catch(() => {}).then(() => browser.contextMenus.create({
+    id,
+    title,
+    contexts: [...contexts],
+    documentUrlPatterns: ['http://*/*', 'https://*/*'],
+  }))
+}
+browser.commands.onCommand.addListener((command: string, tab?: { windowId?: number }) => {
+  if (command === 'quick-ask') {
+    void pageActionController.quickAsk().catch(() => pageActionController.openDraft('', 'chat'))
+  }
+  if (command === 'open-workspace') {
+    const panel = typeof chrome !== 'undefined' ? chrome.sidePanel as unknown as { open?: (_options: { windowId: number }) => Promise<void> } : undefined
+    const windowId = tab?.windowId ?? currentWindowId
+    if (!__FIREFOX__ && panel?.open && windowId !== undefined) {
+      void panel.open({ windowId }).catch(() => browser.tabs.create({ url: browser.runtime.getURL('/dist/sidebar/index.html') }))
+    }
+    else {
+      void browser.tabs.create({ url: browser.runtime.getURL('/dist/sidebar/index.html') })
+    }
+  }
+})

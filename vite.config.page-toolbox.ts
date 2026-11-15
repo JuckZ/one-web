@@ -1,11 +1,12 @@
 import { defineConfig } from 'vite'
 import packageJson from './package.json'
-import { isDev, isFirefox, r } from './scripts/utils'
+import { e, isDev, isFirefox, r } from './scripts/utils'
 import { sharedConfig } from './vite.config'
 
 export default defineConfig({
   ...sharedConfig,
   define: {
+    ...sharedConfig.define,
     '__DEV__': isDev,
     '__FIREFOX__': isFirefox,
     '__NAME__': JSON.stringify(packageJson.name),
@@ -13,7 +14,7 @@ export default defineConfig({
   },
   build: {
     watch: isDev ? {} : undefined,
-    outDir: r('extension/dist/pageToolbox'),
+    outDir: e('dist/pageToolbox'),
     cssCodeSplit: false,
     emptyOutDir: false,
     sourcemap: isDev ? 'inline' : false,

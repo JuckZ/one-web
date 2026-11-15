@@ -12,8 +12,7 @@ test('network management protects new page and iframe WebRTC, then releases brow
   }))
   const panel = await context.newPage()
   await panel.setViewportSize({ width: 420, height: 1000 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
-  await panel.getByTestId('manage-modules').click()
+  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.oneweb.clash-control`)
   const card = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.clash-control"]')
   await expect(card.getByRole('heading', { name: '网络管理', exact: true })).toBeVisible({ timeout: 3000 })
   await card.getByTestId('module-toggle').click()
@@ -44,8 +43,7 @@ test('media device blocking is independent of peer connections and ICE objects',
     body: '<!doctype html><script>window.initialNetwork = [typeof RTCPeerConnection, navigator.mediaDevices === null, typeof RTCIceCandidate]</script>',
   }))
   const panel = await context.newPage()
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
-  await panel.getByTestId('manage-modules').click()
+  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.oneweb.clash-control`)
   const card = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.clash-control"]')
   await card.getByTestId('module-toggle').click()
   const privacy = card.getByTestId('network-management')
@@ -64,8 +62,7 @@ test('extra RTC objects can be hidden while peer connections and media devices s
     body: '<!doctype html><script>window.initialNetwork = [typeof RTCPeerConnection, typeof navigator.mediaDevices, typeof RTCIceCandidate, typeof RTCDataChannel]</script>',
   }))
   const panel = await context.newPage()
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
-  await panel.getByTestId('manage-modules').click()
+  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.oneweb.clash-control`)
   const card = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.clash-control"]')
   await card.getByTestId('module-toggle').click()
   const privacy = card.getByTestId('network-management')
@@ -80,8 +77,7 @@ test('extra RTC objects can be hidden while peer connections and media devices s
 
 test('worker restart restores only WebRTC protection and privacy revocation releases its page scripts', async ({ context, extensionId, clashControllerFixture }) => {
   const panel = await context.newPage()
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
-  await panel.getByTestId('manage-modules').click()
+  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.oneweb.clash-control`)
   const card = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.clash-control"]')
   await card.getByTestId('module-toggle').click()
   const peerRecords = await panel.evaluate(async () => {
@@ -90,7 +86,7 @@ test('worker restart restores only WebRTC protection and privacy revocation rele
   })
   await card.getByTestId('network-apply').click()
   await expect(card.getByTestId('network-status')).toContainText('WebRTC 防护已生效')
-  const cdp = await context.newCDPSession(panel)
+  const cdp = await context.browser()!.newBrowserCDPSession()
   try {
     const { targetInfos } = await cdp.send('Target.getTargets')
     const worker = targetInfos.find(target => target.type === 'service_worker' && target.url.startsWith(`chrome-extension://${extensionId}/`))!
@@ -99,7 +95,6 @@ test('worker restart restores only WebRTC protection and privacy revocation rele
   finally { await cdp.detach() }
   await panel.evaluate(() => new Promise<void>(resolve => chrome.privacy.network.webRTCIPHandlingPolicy.clear({ scope: 'regular_only' }, resolve)))
   await panel.reload()
-  await panel.getByTestId('manage-modules').click()
   await expect(card.getByTestId('network-status')).toContainText('WebRTC 防护已生效')
   expect(clashControllerFixture.requests).toEqual({ version: 0, configs: 0, proxies: 0, unauthorized: 0 })
   await panel.evaluate(() => chrome.permissions.remove({ permissions: ['privacy'] }))
@@ -114,8 +109,7 @@ test('worker restart restores only WebRTC protection and privacy revocation rele
 
 test('Clash disconnect preserves active WebRTC protection and the shared module toggle releases both', async ({ context, extensionId, clashControllerFixture }) => {
   const panel = await context.newPage()
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
-  await panel.getByTestId('manage-modules').click()
+  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.oneweb.clash-control`)
   const card = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.clash-control"]')
   await card.getByTestId('module-toggle').click()
   await card.getByTestId('clash-controller-url').fill(clashControllerFixture.origin)

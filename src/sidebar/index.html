@@ -4,20 +4,26 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title>OneWeb · RepoLens</title>
+    <title>OneWeb · 你的浏览器工作区</title>
   </head>
   <body>
-    <main class="sidebar-shell" data-testid="oneweb-side-panel" data-view="module">
+    <main class="sidebar-shell" data-testid="oneweb-side-panel" data-view="workspace">
       <header class="panel-header">
         <div class="brand">
-          <span class="brand-mark" aria-hidden="true">R</span>
+          <span class="brand-mark" aria-hidden="true">✳</span>
           <div>
             <strong data-testid="module-name">OneWeb</strong>
-            <span data-testid="current-context">等待页面上下文</span>
+            <span data-testid="current-context">你的浏览器工作区</span>
           </div>
         </div>
         <div class="panel-actions">
-          <span class="bridge-state" data-ready="false" role="status" aria-live="polite">正在建立安全桥接…</span>
+          <span class="bridge-state" data-ready="true" role="status" aria-live="polite">本机工作区</span>
+          <button class="panel-icon-button" type="button" data-testid="new-conversation" aria-label="新建对话">
+            ＋
+          </button>
+          <button class="panel-icon-button" type="button" data-testid="open-workspace-tab" aria-label="在标签页打开">
+            ↗
+          </button>
           <button
             class="panel-icon-button"
             type="button"
@@ -35,6 +41,7 @@
           </button>
         </div>
       </header>
+      <div data-testid="workspace"></div>
       <section class="module-surface" data-testid="module-surface">
         <iframe
           data-testid="oneweb-module-frame"

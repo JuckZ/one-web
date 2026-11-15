@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import { extensionRoot } from './utils'
 
 export const ONEWEB_ROOT_PACKAGE_NAME = 'one-web' as const
 export const ONEWEB_DISPLAY_NAME = 'OneWeb' as const
@@ -93,7 +94,7 @@ async function collectTextFiles(target: string): Promise<string[]> {
 async function main() {
   const projectDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
   const packageManifest = JSON.parse(await fs.readFile(path.join(projectDir, 'package.json'), 'utf8'))
-  const extensionManifest = JSON.parse(await fs.readFile(path.join(projectDir, 'extension/manifest.json'), 'utf8'))
+  const extensionManifest = JSON.parse(await fs.readFile(path.join(extensionRoot, 'manifest.json'), 'utf8'))
   const identity = validateOneWebIdentity(packageManifest, extensionManifest)
   const targets = [
     path.join(projectDir, 'package.json'),
@@ -101,8 +102,8 @@ async function main() {
     path.join(projectDir, 'src/modules/builtin/page-toolbox'),
     path.join(projectDir, 'src/pageToolboxContent'),
     path.join(projectDir, 'vite.config.page-toolbox.ts'),
-    path.join(projectDir, 'extension/manifest.json'),
-    path.join(projectDir, 'extension/dist'),
+    path.join(extensionRoot, 'manifest.json'),
+    path.join(extensionRoot, 'dist'),
   ]
   const files = (await Promise.all(targets.map(collectTextFiles))).flat().sort()
   const entries = await Promise.all(files.map(async filePath => ({

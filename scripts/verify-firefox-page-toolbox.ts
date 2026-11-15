@@ -8,18 +8,20 @@ import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import fs from 'fs-extra'
+import { runFirefoxAssistantScenario } from './firefox-assistant-scenario'
+import { prepareFirefoxTestAudio } from './firefox-test-audio'
 
 const EXTENSION_ID = 'one-web@juckz.local'
 const EXTENSION_SIDEBAR_IDENTITY = EXTENSION_ID.split('@')[0]
 const PAGE_TOOLBOX_ID = 'dev.oneweb.page-toolbox'
 const SEND_TO_OPENLIST_ID = 'dev.oneweb.send-to-openlist'
+const VIDEO_DUBBING_ID = 'dev.oneweb.video-dubbing'
 const NETWORK_MANAGEMENT_ID = 'dev.oneweb.clash-control'
 const COMMAND_TIMEOUT_MS = 30_000
 const STARTUP_TIMEOUT_MS = 45_000
 const POLL_INTERVAL_MS = 100
 
 type JsonRecord = Record<string, unknown>
-
 interface FirefoxClashRequests { version: number, configs: number, proxies: number, unauthorized: number }
 const FIREFOX_CLASH_SECRET = 'oneweb-firefox-network-clash-secret'
 
@@ -358,9 +360,45 @@ async function startFixtures() {
   const sendToken = 'oneweb-firefox-openlist-token'
   const sendRequests = { me: 0, tools: 0, add: 0, undone: 0, unauthorized: 0 }
   const sendTasks: Array<Record<string, unknown>> = []
+  const videoBytes = await fs.readFile(new URL('../e2e/assets/dubbing.webm', import.meta.url))
+  const speechBytes = dubbingWav()
+  const dubbingRequests = { translation: 0, speech: 0 }
+  const assistantRequests = { text: 0, translation: 0, aborted: 0 }
   const clashRequests: FirefoxClashRequests = { version: 0, configs: 0, proxies: 0, unauthorized: 0 }
   const server = createServer((request, response) => {
     const url = new URL(request.url || '/', 'http://127.0.0.1')
+    if (url.pathname === '/assistant/article') {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+        .end('<!doctype html><meta charset="utf-8"><title>Firefox assistant acceptance</title><main><h1>Firefox reading fixture</h1><p id="assistant-source">Known Firefox page context.</p><p>Another bounded paragraph.</p></main><textarea>Hello world!</textarea>')
+      return
+    }
+    if (url.pathname === '/assistant/v1/chat/completions') {
+      const chunks: Buffer[] = []
+      request.on('data', chunk => chunks.push(Buffer.from(chunk)))
+      request.on('end', () => {
+        const input = JSON.parse(Buffer.concat(chunks).toString())
+        if (input.messages[0]?.content.includes('Preserve every ID exactly once')) {
+          assistantRequests.translation++
+          const blocks = JSON.parse(input.messages.at(-1).content).blocks as Array<{ id: string, text: string }>
+          response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ choices: [{ message: {
+            content: JSON.stringify({ translations: blocks.map(block => ({ id: block.id, text: `译文 ${block.text}` })) }),
+          } }] }))
+          return
+        }
+        assistantRequests.text++
+        response.on('close', () => {
+          if (!response.writableEnded)
+            assistantRequests.aborted++
+        })
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        if (JSON.stringify(input.messages).includes('HOLD-FIREFOX-STREAM')) {
+          response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Firefox pending' } }] })}\n\n`)
+          return
+        }
+        response.end(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Firefox <b>safe</b>' } }] })}\n\ndata: [DONE]\n\n`)
+      })
+      return
+    }
     if (['/version', '/configs', '/proxies'].includes(url.pathname)) {
       if (request.method !== 'GET' || request.headers.authorization !== `Bearer ${FIREFOX_CLASH_SECRET}`) {
         clashRequests.unauthorized++
@@ -386,6 +424,51 @@ async function startFixtures() {
         'content-type': 'text/html; charset=utf-8',
         'content-security-policy': 'script-src \'nonce-network\'; frame-src \'self\'',
       }).end(renderNetworkFixture(url.pathname === '/network-frame'))
+      return
+    }
+    if (url.pathname === '/dubbing-video') {
+      response.writeHead(200, { 'cache-control': 'no-store', 'content-type': 'text/html; charset=utf-8' })
+        .end('<!doctype html><title>Firefox HTML5 dubbing fixture</title><div style="position:relative;width:800px;height:450px"><video controls preload="auto" src="/dubbing.webm" style="width:100%;height:100%"></video></div>')
+      return
+    }
+    if (url.pathname === '/dubbing.webm') {
+      const range = /^bytes=(\d+)-(\d*)$/.exec(request.headers.range ?? '')
+      const start = range ? Number(range[1]) : 0
+      const end = range?.[2] ? Math.min(Number(range[2]), videoBytes.length - 1) : videoBytes.length - 1
+      if (start > end || start >= videoBytes.length) {
+        response.writeHead(416, { 'content-range': `bytes */${videoBytes.length}` }).end()
+        return
+      }
+      response.writeHead(range ? 206 : 200, {
+        'content-type': 'video/webm',
+        'accept-ranges': 'bytes',
+        'content-length': end - start + 1,
+        ...(range ? { 'content-range': `bytes ${start}-${end}/${videoBytes.length}` } : {}),
+      }).end(videoBytes.subarray(start, end + 1))
+      return
+    }
+    if (url.pathname.startsWith('/dub/v1/')) {
+      const chunks: Buffer[] = []
+      request.on('data', chunk => chunks.push(Buffer.from(chunk)))
+      request.on('end', () => {
+        if (url.pathname === '/dub/v1/chat/completions') {
+          dubbingRequests.translation++
+          const input = JSON.parse(Buffer.concat(chunks).toString())
+          const cues = JSON.parse(input.messages[1].content).cues as Array<{ id: string }>
+          response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
+            choices: [{ message: { content: JSON.stringify({
+              cues: cues.map(cue => ({ id: cue.id, translatedText: `Firefox translated ${cue.id}` })),
+            }) } }],
+          }))
+        }
+        else if (url.pathname === '/dub/v1/audio/speech') {
+          dubbingRequests.speech++
+          response.writeHead(200, { 'content-type': 'audio/wav' }).end(speechBytes)
+        }
+        else {
+          response.writeHead(404).end()
+        }
+      })
       return
     }
     const reply = (code: number, data: unknown, status = 200) => response.writeHead(status, {
@@ -468,8 +551,31 @@ async function startFixtures() {
     server,
     sendRequests,
     sendToken,
+    dubbingRequests,
+    assistantRequests,
     clashRequests,
   }
+}
+
+/** Self-generated PCM tone exercises the real browser decoder without cloud credentials. */
+function dubbingWav() {
+  const samples = 3 * 24000
+  const bytes = Buffer.alloc(44 + samples * 2)
+  bytes.write('RIFF', 0)
+  bytes.writeUInt32LE(bytes.length - 8, 4)
+  bytes.write('WAVEfmt ', 8)
+  bytes.writeUInt32LE(16, 16)
+  bytes.writeUInt16LE(1, 20)
+  bytes.writeUInt16LE(1, 22)
+  bytes.writeUInt32LE(24000, 24)
+  bytes.writeUInt32LE(48000, 28)
+  bytes.writeUInt16LE(2, 32)
+  bytes.writeUInt16LE(16, 34)
+  bytes.write('data', 36)
+  bytes.writeUInt32LE(samples * 2, 40)
+  for (let i = 0; i < samples; i++)
+    bytes.writeInt16LE(Math.round(Math.sin(i / 24000 * 440 * Math.PI * 2) * 2000), 44 + i * 2)
+  return bytes
 }
 
 async function availablePort() {
@@ -594,12 +700,19 @@ async function waitForPage(client: MarionetteClient, predicate: string, label: s
 async function showModuleManagement(client: MarionetteClient, driverHandle: string) {
   await switchWindow(client, driverHandle)
   await execute(client, 'const button=document.querySelector("[data-testid=manage-modules]");if(button?.getAttribute("aria-expanded")!=="true")button?.click();return true')
-  await waitForPage(client, `document.querySelector('[data-testid="module-manager"] [data-module-id="${NETWORK_MANAGEMENT_ID}"] [data-testid="module-toggle"]')`, 'Firefox module management')
+  await waitForPage(client, `document.querySelector('[data-testid="module-manager"][data-surface="settings"] [data-module-id="${PAGE_TOOLBOX_ID}"] [data-testid="module-toggle"]')`, 'Firefox module management')
 }
 
 async function showBuiltinTool(client: MarionetteClient, driverHandle: string, moduleId: string, selector: string) {
-  await showModuleManagement(client, driverHandle)
-  await waitForPage(client, `document.querySelector('[data-module-id="${moduleId}"]')&&document.querySelector(${JSON.stringify(selector)})`, 'Firefox builtin management tool')
+  await switchWindow(client, driverHandle)
+  await execute(client, [
+    'const manager=document.querySelector("[data-testid=manage-modules]");',
+    'if(manager?.getAttribute("aria-expanded")==="true")manager.click();',
+    'document.querySelector("[data-destination=tools]").click();return true;',
+  ].join(''))
+  await waitForPage(client, `document.querySelector('[data-open-module="${moduleId}"]')`, 'Firefox tool entry')
+  await execute(client, 'document.querySelector(`[data-open-module="${arguments[0]}"]`).click();return true', [moduleId])
+  await waitForPage(client, `document.querySelector(${JSON.stringify(selector)})`, 'Firefox builtin workspace')
 }
 
 async function grantExactOrigin(client: MarionetteClient, originPattern: string) {
@@ -661,7 +774,7 @@ async function activateAndApprove(client: MarionetteClient, driverHandle: string
 }
 
 async function activateAndRunSidebarSave(client: MarionetteClient, driverHandle: string, origin: string) {
-  await switchWindow(client, driverHandle)
+  await showBuiltinTool(client, driverHandle, PAGE_TOOLBOX_ID, '[data-testid=page-toolbox-control]')
   const result = asRecord(await executeAsync(client, [
     'const input=arguments[0],done=arguments[arguments.length-1];',
     '(async()=>{',
@@ -700,7 +813,7 @@ async function activateAndRunSidebarSave(client: MarionetteClient, driverHandle:
 }
 
 async function toggleBuiltin(client: MarionetteClient, driverHandle: string, expected: boolean) {
-  await switchWindow(client, driverHandle)
+  await showModuleManagement(client, driverHandle)
   await execute(client, [
     `const card=document.querySelector('[data-testid="module-card"][data-module-id="${PAGE_TOOLBOX_ID}"]');`,
     'const toggle=card?.querySelector("[data-testid=module-toggle]");',
@@ -715,7 +828,7 @@ async function toggleBuiltin(client: MarionetteClient, driverHandle: string, exp
 }
 
 async function toggleSendToOpenList(client: MarionetteClient, driverHandle: string, expected: boolean) {
-  await switchWindow(client, driverHandle)
+  await showModuleManagement(client, driverHandle)
   await execute(client, [
     `const card=document.querySelector('[data-testid="module-card"][data-module-id="${SEND_TO_OPENLIST_ID}"]');`,
     'const toggle=card?.querySelector("[data-testid=module-toggle]");',
@@ -736,7 +849,9 @@ async function runFirefoxScenario(
   betaOrigin: string,
   sendToken: string,
   sendRequests: { me: number, tools: number, add: number, undone: number, unauthorized: number },
+  dubbingRequests: { translation: number, speech: number },
   clashRequests: FirefoxClashRequests,
+  assistantRequests: { text: number, translation: number, aborted: number },
 ) {
   await client.command('WebDriver:NewSession', { capabilities: { alwaysMatch: {} } })
   const handles = await client.command('WebDriver:GetWindowHandles')
@@ -766,7 +881,9 @@ async function runFirefoxScenario(
     return
   }
 
-  await execute(client, 'document.querySelector("[data-testid=manage-modules]").click();return true')
+  // Capture isolation after the expected workspace navigation has persisted.
+  await showBuiltinTool(client, driverHandle, PAGE_TOOLBOX_ID, '[data-testid=page-toolbox-control]')
+  await showModuleManagement(client, driverHandle)
   await waitForPage(client, `document.querySelector('[data-testid="module-card"][data-module-id="${PAGE_TOOLBOX_ID}"]')`, 'Page Toolbox module card')
 
   const protectedIds = [
@@ -945,14 +1062,129 @@ async function runFirefoxScenario(
   ].join(''), [protectedIds])
   assert(JSON.stringify(sendProtectedAfter) === JSON.stringify(sendProtectedBefore), 'Firefox Send to OpenList changed protected module records')
   assert(sendRequests.me === 1 && sendRequests.tools === 1 && sendRequests.add === 1 && sendRequests.undone === 1 && sendRequests.unauthorized === 0, `Firefox fixed connector requests are invalid: ${JSON.stringify(sendRequests)}`)
+  await runVideoDubbingFirefoxScenario(client, driverHandle, alphaOrigin, dubbingRequests)
   await runCookieManagerFirefoxScenario(client, driverHandle)
+  await runFirefoxAssistantScenario({
+    execute: (script, args) => execute(client, script, args),
+    executeAsync: (script, args) => executeAsync(client, script, args),
+    switchWindow: handle => switchWindow(client, handle),
+    newTab: url => newTab(client, url),
+    wait: async (predicate, label) => { await waitForPage(client, predicate, label) },
+    clickSurface: async (label) => {
+      const found = asRecord(await execute(client, `
+        const root=document.querySelector("[data-oneweb-assistant]")?.shadowRoot;
+        return [...root.querySelectorAll("button")].find(button=>button.getAttribute("aria-label")===arguments[0]||button.textContent===arguments[0]);
+      `, [label]), 'Firefox assistant native click target')
+      const id = found['element-6066-11e4-a52e-4f735466cecf']
+      assert(typeof id === 'string', `Firefox assistant button missing: ${label}`)
+      await client.command('WebDriver:ElementClick', { id })
+    },
+    grant: pattern => grantExactOrigin(client, pattern),
+    revoke: pattern => removeExactOrigin(client, pattern),
+    click: selector => clickElement(client, selector),
+  }, driverHandle, alphaOrigin, assistantRequests)
   await runNetworkManagementFirefoxScenario(client, driverHandle, alphaOrigin, clashRequests)
-  process.stdout.write('Firefox packaged-builtin gates: 4/4 passed (Page Toolbox + Send to OpenList + Cookie Manager CRUD/partition/JSON/revocation/isolation + Network Management WebRTC/Clash)\n')
+  process.stdout.write('Firefox packaged-builtin gates: 5/5 passed (Page Toolbox + Send to OpenList + Video Dubbing real media + Cookie Manager CRUD/partition/JSON/revocation/isolation + Network Management WebRTC/Clash)\n')
+}
+
+async function clickElement(client: MarionetteClient, selector: string) {
+  const found = asRecord(unwrapValue(await client.command('WebDriver:FindElement', {
+    using: 'css selector',
+    value: selector,
+  })), 'Firefox click target')
+  const id = found['element-6066-11e4-a52e-4f735466cecf']
+  assert(typeof id === 'string', `Firefox click target missing: ${selector}`)
+  await client.command('WebDriver:ElementClick', { id })
+}
+
+async function dubbingCommand(client: MarionetteClient, driverHandle: string, origin: string, command: string, data: unknown = {}) {
+  await switchWindow(client, driverHandle)
+  const result = asRecord(await executeAsync(client, `
+    const input=arguments[0], done=arguments[arguments.length-1];
+    (async()=>{
+      const tab=(await browser.tabs.query({})).find(tab=>tab.url===input.origin+"/dubbing-video");
+      if(!tab)throw new Error("Firefox dubbing video tab missing");
+      await browser.tabs.update(tab.id,{active:true});
+      const reply=await browser.runtime.sendMessage({
+        channel:"oneweb.video-dubbing.management.v1",command:input.command,data:input.data,
+      });
+      if(!reply?.ok)throw new Error(reply?.error||"No dubbing reply");
+      return reply.value;
+    })().then(value=>done({ok:true,value}),error=>done({ok:false,error:String(error)}));
+  `, [{ origin, command, data }]), 'Firefox dubbing command')
+  assert(result.ok === true, `Firefox dubbing ${command} failed: ${String(result.error)}`)
+  return asRecord(result.value, 'Firefox dubbing status')
+}
+
+async function runVideoDubbingFirefoxScenario(
+  client: MarionetteClient,
+  driverHandle: string,
+  origin: string,
+  requests: { translation: number, speech: number },
+) {
+  const videoHandle = await newTab(client, `${origin}/dubbing-video`)
+  await waitForPage(client, 'document.querySelector("video")?.readyState>=3', 'Firefox real dubbing video')
+  await execute(client, 'const video=document.querySelector("video");video.volume=.65;video.muted=true;return true')
+  await showModuleManagement(client, driverHandle)
+  await execute(client, `document.querySelector('[data-module-id="${VIDEO_DUBBING_ID}"] [data-testid="module-toggle"]').click();return true`)
+  await waitForPage(client, `document.querySelector('[data-module-id="${VIDEO_DUBBING_ID}"] [data-testid="module-toggle"]')?.getAttribute("aria-checked")==="true"`, 'Firefox dubbing module enabled')
+  await showBuiltinTool(client, driverHandle, VIDEO_DUBBING_ID, '[data-testid=video-dubbing]')
+  // Exact fixture-origin grant applies only inside this isolated temporary profile.
+  await grantExactOrigin(client, `${origin}/*`)
+  await dubbingCommand(client, driverHandle, origin, 'save', {
+    config: {
+      translation: { baseUrl: `${origin}/dub/v1/`, key: 'TEST-T', model: 'fixture' },
+      speech: { baseUrl: `${origin}/dub/v1/`, key: 'TEST-S', model: 'fixture', voice: 'fixture' },
+    },
+  })
+  await dubbingCommand(client, driverHandle, origin, 'open')
+  await switchWindow(client, videoHandle)
+  await waitForPage(client, 'document.querySelector("#oneweb-video-dubbing")', 'Firefox production dubbing overlay')
+  await dubbingCommand(client, driverHandle, origin, 'start', {
+    language: 'zh-CN',
+    subtitles: '1\n00:00:00,000 --> 00:00:02,000\nFirst Firefox cue\n\n2\n00:00:08,000 --> 00:00:12,000\nLater Firefox cue',
+  })
+  await switchWindow(client, videoHandle)
+  await waitForPage(client, 'document.querySelector("#oneweb-video-dubbing")?.textContent.includes("已暂停")', 'Firefox paused first-cue preparation')
+  // A real WebDriver click supplies user activation; audio.play is never mocked.
+  await clickElement(client, '#oneweb-video-dubbing button:first-of-type')
+  await waitForPage(client, 'document.querySelector("audio[data-oneweb-dub-audio]")?.currentTime>.1', 'Firefox decoded audio time advancement')
+  const firstAudio = asRecord(await execute(client, 'const a=document.querySelector("audio");return {duration:a.duration,time:a.currentTime,paused:a.paused,error:a.error?.code||null}'), 'Firefox real audio playback')
+  assert(firstAudio.paused === false && firstAudio.error === null && firstAudio.duration === 3, `Firefox real audio did not play: ${JSON.stringify(firstAudio)}`)
+  await clickElement(client, '#oneweb-video-dubbing button:nth-of-type(2)')
+  await waitForPage(client, 'document.querySelector("video").paused&&document.querySelector("audio").paused', 'Firefox pause synchronization')
+  await clickElement(client, '#oneweb-video-dubbing button:first-of-type')
+  await execute(client, 'const video=document.querySelector("video");video.currentTime=8.5;video.playbackRate=1.5;return true')
+  await waitForPage(client, 'document.querySelector("#oneweb-video-dubbing")?.textContent.includes("Firefox translated cue-2")&&document.querySelector("audio").currentTime>.3', 'Firefox seek to later cue')
+  const rate = await execute(client, 'return document.querySelector("audio").playbackRate')
+  assert(rate === 1.5, `Firefox dub speed did not follow video: ${String(rate)}`)
+  await dubbingCommand(client, driverHandle, origin, 'volumes', { originalVolume: 0.1, dubVolume: 0.5 })
+  await switchWindow(client, videoHandle)
+  await waitForPage(client, 'document.querySelector("video").volume===.1&&document.querySelector("audio").volume===.5', 'Firefox independent volumes')
+  await clickElement(client, '#oneweb-video-dubbing button:nth-of-type(3)')
+  await waitForPage(client, 'document.querySelector("#oneweb-video-dubbing")?.textContent.includes("未启动")&&!document.querySelector("audio").hasAttribute("src")', 'Firefox stop clears audio')
+  const restored = await execute(client, 'const v=document.querySelector("video");return {volume:v.volume,muted:v.muted,rate:v.playbackRate}')
+  assert(JSON.stringify(restored) === JSON.stringify({ volume: 0.65, muted: true, rate: 1.5 }), `Firefox stop did not restore media: ${JSON.stringify(restored)}`)
+  await dubbingCommand(client, driverHandle, origin, 'revoke')
+  await switchWindow(client, videoHandle)
+  await waitForPage(client, '!document.querySelector("#oneweb-video-dubbing")&&!document.querySelector("audio[data-oneweb-dub-audio]")', 'Firefox revocation cleanup')
+  const callsAfterStop = requests.translation + requests.speech
+  await delay(500)
+  assert(requests.translation + requests.speech === callsAfterStop, 'Firefox emitted service calls after stop/revocation')
+  assert(requests.translation > 0 && requests.speech === 2, `Firefox fixture call budget failed: ${JSON.stringify(requests)}`)
+  await grantExactOrigin(client, `${origin}/*`)
+  await dubbingCommand(client, driverHandle, origin, 'delete')
+  await removeExactOrigin(client, `${origin}/*`)
+  await showModuleManagement(client, driverHandle)
+  await execute(client, `document.querySelector('[data-module-id="${VIDEO_DUBBING_ID}"] [data-testid="module-toggle"]').click();return true`)
+  process.stdout.write(`Firefox dubbing: real WAV decoded/played, pause/resume, seek/rate, volumes, stop/revoke cleanup; fixture requests ${JSON.stringify(requests)}\n`)
 }
 
 async function runCookieManagerFirefoxScenario(client: MarionetteClient, driverHandle: string) {
-  await switchWindow(client, driverHandle)
+  await showModuleManagement(client, driverHandle)
   await execute(client, 'document.querySelector(\'[data-module-id="dev.oneweb.cookie-manager"] [data-testid="module-toggle"]\').click();return true')
+  await pollUntil(() => execute(client, 'return document.querySelector(\'[data-module-id="dev.oneweb.cookie-manager"] [data-testid="module-toggle"]\')?.getAttribute("aria-checked")'), COMMAND_TIMEOUT_MS, 'Firefox Cookie module enabled', value => value === 'true')
+  await showBuiltinTool(client, driverHandle, 'dev.oneweb.cookie-manager', '[data-testid=cookie-manager]')
   await waitForPage(client, 'document.querySelector("[data-testid=cookie-manager]")', 'Firefox Cookie Manager entry')
   // Test-only permission bootstrap in the isolated temporary Firefox profile.
   await setContext(client, 'chrome')
@@ -1008,16 +1240,6 @@ async function runCookieManagerFirefoxScenario(client: MarionetteClient, driverH
     '})().then(done,error=>done({ok:false,error:String(error)}));',
   ].join('')), 'Firefox Cookie Manager public-protocol gate')
   assert(result.ok === true, `Firefox Cookie Manager failed: ${String(result.error)}`)
-}
-
-async function clickElement(client: MarionetteClient, selector: string) {
-  const found = asRecord(unwrapValue(await client.command('WebDriver:FindElement', {
-    using: 'css selector',
-    value: selector,
-  })), 'Firefox click target')
-  const id = found['element-6066-11e4-a52e-4f735466cecf']
-  assert(typeof id === 'string', `Firefox click target missing: ${selector}`)
-  await client.command('WebDriver:ElementClick', { id })
 }
 
 async function networkFixtureState(client: MarionetteClient, expected: JsonRecord) {
@@ -1217,7 +1439,7 @@ async function runNetworkManagementFirefoxScenario(client: MarionetteClient, dri
   // from the ordinary fixture tab rather than using the discarded old handle.
   await switchWindow(client, pageHandle)
   driverHandle = await newTab(client, driverUrl)
-  await waitForPage(client, 'document.readyState==="complete"&&document.querySelector("[data-testid=manage-modules]")', 'Firefox trusted sidebar after addon restart')
+  await waitForPage(client, 'document.readyState==="complete"&&document.querySelector("[data-testid=manage-modules]")&&document.querySelector("[data-destination=tools]")', 'Firefox trusted sidebar after addon restart')
   await showBuiltinTool(client, driverHandle, NETWORK_MANAGEMENT_ID, '[data-testid=network-management]')
   await waitForPage(client, 'document.querySelector("[data-testid=network-status]")?.textContent.includes("WebRTC 防护已生效")', 'Firefox explicitly enabled WebRTC restored after restart')
   await switchWindow(client, pageHandle)
@@ -1296,7 +1518,7 @@ async function runNetworkManagementFirefoxScenario(client: MarionetteClient, dri
 
 async function main() {
   const projectDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-  const extensionDir = path.join(projectDir, 'extension')
+  const extensionDir = path.resolve(projectDir, process.env.EXTENSION_PATH || process.env.ONEWEB_EXTENSION_DIR || 'extension')
   const manifest = await fs.readJson(path.join(extensionDir, 'manifest.json'))
   validateFirefoxArtifactManifest(manifest)
   const fixtures = await startFixtures()
@@ -1307,7 +1529,10 @@ async function main() {
   let child: ChildProcess | null = null
   let marionette: MarionetteClient | null = null
   let rdp: RdpClient | null = null
+  let releaseAudio = async () => {}
   try {
+    const audio = await prepareFirefoxTestAudio()
+    releaseAudio = audio.cleanup
     child = spawn(process.execPath, [
       webExtCli,
       'run',
@@ -1331,7 +1556,7 @@ async function main() {
       detached: true,
       // Firefox 160 reads this environment variable for privileged automation;
       // the older --remote-allow-system-access argument alone is insufficient.
-      env: { ...process.env, NO_COLOR: '1', MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1' },
+      env: { ...audio.env, NO_COLOR: '1', MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     const rdpPort = await waitForRdpPort(child, log)
@@ -1347,7 +1572,9 @@ async function main() {
       fixtures.betaOrigin,
       fixtures.sendToken,
       fixtures.sendRequests,
+      fixtures.dubbingRequests,
       fixtures.clashRequests,
+      fixtures.assistantRequests,
     )
   }
   catch (error) {
@@ -1360,6 +1587,7 @@ async function main() {
     await Promise.allSettled([
       terminateProcessGroup(child?.pid),
       fixtures.close(),
+      releaseAudio(),
     ])
   }
 }

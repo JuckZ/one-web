@@ -133,6 +133,15 @@ describe('send to OpenList result contract', () => {
       .toMatchObject({ ok: false, code: 'response-too-large' })
   })
 
+  it('projects real server progress overshoot into a bounded percentage without mutating input', () => {
+    // OpenList v4.2.6 SimpleHttp returned this value after a successful 16 KiB download.
+    const input = rawTask({ state: 2, progress: 100.51533742331289, total_bytes: 16384 })
+    expect(valueOf(normalizeSendToOpenListTasks([input]))[0].progress).toBe(100)
+    expect(input.progress).toBe(100.51533742331289)
+    for (const progress of [Number.NaN, Number.POSITIVE_INFINITY, -0.01])
+      expect(normalizeSendToOpenListTasks([rawTask({ progress })])).toMatchObject({ ok: false })
+  })
+
   it('builds task list and cancel results without accepting caller transport data', () => {
     const list = valueOf(createSendToOpenListListTasksCommand(authority, 'request-4', 'undone'))
     const listResult = valueOf(createSendToOpenListTasksResult(list, [rawTask()]))

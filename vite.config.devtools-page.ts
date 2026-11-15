@@ -1,12 +1,13 @@
 import { defineConfig } from 'vite'
 import packageJson from './package.json'
-import { isDev, r } from './scripts/utils'
+import { e, isDev, r } from './scripts/utils'
 import { sharedConfig } from './vite.config'
 
 // bundling the content script using Vite
 export default defineConfig({
   ...sharedConfig,
   define: {
+    ...sharedConfig.define,
     '__DEV__': isDev,
     '__NAME__': JSON.stringify(packageJson.name),
     // https://github.com/vitejs/vite/issues/9320
@@ -17,7 +18,7 @@ export default defineConfig({
     watch: isDev
       ? {}
       : undefined,
-    outDir: r('extension/dist/devtools-page'),
+    outDir: e('dist/devtools-page'),
     cssCodeSplit: false,
     emptyOutDir: false,
     sourcemap: isDev ? 'inline' : false,

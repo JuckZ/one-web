@@ -30,8 +30,8 @@ export default defineConfig({
       imports: [
         'vue',
         {
-          'webextension-polyfill': [
-            ['=', 'browser'],
+          '~/platform/browser': [
+            ['default', 'browser'],
           ],
         },
         {

@@ -40,6 +40,7 @@ function withinSite(hostname: string | null, domain: string, hostOnly: boolean) 
 export class CookieManagerController {
   private readonly preparations = new Map<string, PreparationState>()
   private readonly snapshots = new Map<string, { snapshot: CookieSnapshot, preparation: PreparationState }>()
+  private readonly closeHandles = new Map<string, PreparationState>()
   private readonly previews = new Map<string, { snapshotId: string, preview: CookieImportPreview }>()
   private generation = 0
   private queue: Promise<unknown> = Promise.resolve()
@@ -65,6 +66,10 @@ export class CookieManagerController {
     }
     for (const [id, state] of this.snapshots) {
       if (state.preparation.expiresAt <= this.now())
+        this.close(id)
+    }
+    for (const [id, preparation] of this.closeHandles) {
+      if (preparation.expiresAt <= this.now())
         this.close(id)
     }
   }
@@ -136,6 +141,11 @@ export class CookieManagerController {
     }
   }
 
+  private livePreparation(preparation: PreparationState) {
+    return this.preparations.get(preparation.token) === preparation
+      && preparation.generation === this.generation && preparation.expiresAt > this.now()
+  }
+
   private async openPrepared(token: string): Promise<CookieResult<CookieSnapshot>> {
     this.prune()
     const preparation = this.preparations.get(token)
@@ -144,16 +154,20 @@ export class CookieManagerController {
     const initialAccess = await this.preparationAccess(preparation)
     if (!initialAccess.ok)
       return initialAccess
+    if (!this.livePreparation(preparation))
+      return { ok: false, reason: 'lifecycle-cancelled' }
     const stores = await this._options.cookies.getAllCookieStores()
     const entries: CookieSnapshot['entries'] = []
     let bytes = 2
     for (const store of stores) {
+      if (!this.livePreparation(preparation))
+        return { ok: false, reason: 'lifecycle-cancelled' }
       const cookies = await this._options.cookies.getAll({
         storeId: store.id,
         partitionKey: {},
         ...(this._options.firefox ? { firstPartyDomain: null } : {}),
       })
-      if (preparation.generation !== this.generation || preparation.expiresAt <= this.now())
+      if (!this.livePreparation(preparation))
         return { ok: false, reason: 'lifecycle-cancelled' }
       for (const raw of cookies) {
         const cookie = normalizeBrowserCookie(raw)
@@ -173,7 +187,7 @@ export class CookieManagerController {
     const authority = await this.preparationAccess(preparation)
     if (!authority.ok)
       return authority
-    if (!this.preparations.delete(token) || preparation.generation !== this.generation)
+    if (!this.livePreparation(preparation) || !this.preparations.delete(token))
       return { ok: false, reason: 'lifecycle-cancelled' }
     const snapshot: CookieSnapshot = {
       id: crypto.randomUUID(),
@@ -183,6 +197,10 @@ export class CookieManagerController {
       entries,
     }
     this.snapshots.set(snapshot.id, { snapshot, preparation })
+    // Initial delivery still belongs to the preparation token until the caller
+    // acknowledges the snapshot by refreshing it. Refresh already has its handle.
+    if (![...this.closeHandles.values()].includes(preparation))
+      this.closeHandles.set(token, preparation)
     return { ok: true, value: structuredClone(snapshot) }
   }
 
@@ -190,10 +208,20 @@ export class CookieManagerController {
     const state = this.snapshots.get(id)
     if (!state)
       return { ok: false, reason: 'lifecycle-cancelled' }
+    // Starting another refresh acknowledges the current snapshot. Retain only its
+    // predecessor as a close handle while the next response is pending/delivered.
+    for (const [previous, preparation] of this.closeHandles) {
+      if (preparation === state.preparation)
+        this.closeHandles.delete(previous)
+    }
+    this.closeHandles.set(id, state.preparation)
     this.preparations.set(state.preparation.token, state.preparation)
     this.snapshots.delete(id)
     this.clearPreviews(id)
-    return this.open(state.preparation.token)
+    const result = await this.open(state.preparation.token)
+    if (!result.ok)
+      this.close(id)
+    return result
   }
 
   private exclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -453,9 +481,23 @@ export class CookieManagerController {
   }
 
   close(id: string): CookieResult<null> {
+    const preparation = this.snapshots.get(id)?.preparation ?? this.preparations.get(id) ?? this.closeHandles.get(id)
     this.snapshots.delete(id)
     this.preparations.delete(id)
     this.clearPreviews(id)
+    if (preparation) {
+      this.preparations.delete(preparation.token)
+      for (const [snapshotId, state] of this.snapshots) {
+        if (state.preparation === preparation) {
+          this.snapshots.delete(snapshotId)
+          this.clearPreviews(snapshotId)
+        }
+      }
+      for (const [previous, state] of this.closeHandles) {
+        if (state === preparation)
+          this.closeHandles.delete(previous)
+      }
+    }
     return { ok: true, value: null }
   }
 
@@ -463,6 +505,7 @@ export class CookieManagerController {
     this.generation++
     this.preparations.clear()
     this.snapshots.clear()
+    this.closeHandles.clear()
     this.previews.clear()
   }
 }

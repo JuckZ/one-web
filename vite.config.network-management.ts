@@ -1,10 +1,10 @@
 import { defineConfig } from 'vite'
-import { isDev, r } from './scripts/utils'
+import { e, isDev, r } from './scripts/utils'
 
 export default defineConfig({
   build: {
     watch: isDev ? {} : undefined,
-    outDir: r('extension/dist/network'),
+    outDir: e('dist/network'),
     emptyOutDir: false,
     sourcemap: isDev ? 'inline' : false,
     rollupOptions: {

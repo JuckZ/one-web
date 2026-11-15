@@ -19,6 +19,9 @@ jobs:
     name: Build release artifact
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      REPOLENS_ORIGIN: ${{ vars.REPOLENS_ORIGIN }}
+      REPOLENS_REQUIRE_HTTPS: 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -48,17 +51,27 @@ jobs:
       - name: Unit tests
         run: pnpm run test:coverage
 
-      - name: Build extension
+      - name: Build and verify Firefox extension
+        run: pnpm run verify:firefox
+
+      - name: Package Firefox extension
+        env:
+          ONEWEB_EXTENSION_DIR: artifacts/test/firefox
+        run: pnpm run pack:xpi && mv extension.xpi oneweb-firefox.xpi
+
+      - name: Build Chromium extension
         run: pnpm run build
 
-      - name: Package extension
+      - name: Package Chromium extension
         run: pnpm run pack:zip
 
-      - name: Upload extension artifact
+      - name: Upload browser artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: extension-zip
-          path: extension.zip
+          name: extension-artifacts
+          path: |
+            extension.zip
+            oneweb-firefox.xpi
           if-no-files-found: error
           retention-days: 14
 
@@ -66,13 +79,27 @@ jobs:
     name: Publish extension stores
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: read
     if: github.ref == 'refs/heads/deploy'
     steps:
+      - name: Checkout exact source commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Require exact-commit CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/agent-factory/require_ci.py --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --wait-seconds 900
+
       - name: Download extension artifact
         uses: actions/download-artifact@v4
         with:
-          name: extension-zip
+          name: extension-artifacts
 
       - name: Publish to Chrome Web Store
         uses: wdzeng/chrome-extension@37f4f9cdc664959bafef36b1f4da03dec5141620 # v2
@@ -96,7 +123,7 @@ jobs:
         uses: wdzeng/firefox-addon@3184ee491b500e080885e046051366a4228c6e5d # v1
         with:
           addon-guid: ${{ secrets.FIREFOX_ADDON_GUID }}
-          xpi-path: extension.zip
+          xpi-path: oneweb-firefox.xpi
           self-hosted: false
           jwt-issuer: ${{ secrets.FIREFOX_JWT_ISSUER }}
           jwt-secret: ${{ secrets.FIREFOX_JWT_SECRET }}

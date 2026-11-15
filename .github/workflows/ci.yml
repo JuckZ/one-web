@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - work
+      - deploy
   workflow_dispatch:
 
 permissions:
@@ -13,13 +14,13 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/deploy' }}
 
 jobs:
   validate:
     name: Validate (${{ matrix.node-version }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -46,14 +47,42 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck
-        run: pnpm run typecheck
+      - name: Factory core checks
+        run: python3 scripts/agent-factory/factory.py check --config .agent-factory.ci.json
 
-      - name: Lint
-        run: pnpm run lint
+      - name: Upload core verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-verification-node-${{ matrix.node-version }}
+          path: .git/agent-factory/runs/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
 
-      - name: Unit tests
-        run: pnpm run test:coverage
+      - name: Install extension-capable Chromium
+        run: pnpm exec playwright install --with-deps --no-shell chromium
 
-      - name: Build extension
-        run: pnpm run build
+      - name: Verify Chromium target
+        run: pnpm run verify:chromium
+
+      - name: Upload Chromium E2E failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromium-e2e-node-${{ matrix.node-version }}
+          path: artifacts/test-results/chromium/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Prepare isolated Firefox audio output
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pulseaudio
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=oneweb_ci
+
+      - name: Verify Firefox target
+        env:
+          PULSE_SINK: oneweb_ci
+        run: pnpm run verify:firefox

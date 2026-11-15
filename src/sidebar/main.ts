@@ -1,6 +1,7 @@
 import type { Runtime } from 'webextension-polyfill'
 import { storageModuleCapabilityCatalog } from '@oneweb/module-sdk'
-import browser from 'webextension-polyfill'
+import { ASSISTANT_PORT } from '~/modules/builtin/assistant/contracts'
+import { AssistantClient } from '~/modules/builtin/assistant/protocol'
 import { BookmarkDoctorClient } from '~/modules/builtin/bookmark-doctor'
 import { BrowserJournalClient } from '~/modules/builtin/browser-journal'
 import { ClashControlClient } from '~/modules/builtin/clash-control'
@@ -8,6 +9,7 @@ import { CookieManagerClient } from '~/modules/builtin/cookie-manager/protocol'
 import { NetworkManagementClient } from '~/modules/builtin/network-management/protocol'
 import { PageToolboxClient } from '~/modules/builtin/page-toolbox'
 import { SendToOpenListClient } from '~/modules/builtin/send-to-openlist'
+import { DubbingClient } from '~/modules/builtin/video-dubbing/protocol'
 import { type ContextSnapshot, createDefaultContextBroker } from '~/modules/context-broker'
 import {
   type ContextSnapshotMessage,
@@ -18,13 +20,19 @@ import { ModuleFrameHost } from '~/modules/frame-host'
 import { ModuleManagementClient } from '~/modules/management-client'
 import { StorageModuleClient } from '~/modules/storage-module-client'
 import type { InstalledModuleRecord } from '~/modules/types'
+import browser from '~/platform/browser'
 import { resolveRepoLensInitFields } from '~/repolens/authorization'
+import { PageActionClient } from '~/workspace/page-actions'
+import { PageContextClient } from '~/workspace/page-context'
+import { WorkspaceController, type WorkspaceSnapshot, WorkspaceView } from '~/workspace/workspace'
+import { type AssistantMode, AssistantView } from './assistant-view'
 import { ModuleManagementView } from './module-management-view'
+import './video-dubbing.css'
 import './sidebar.css'
 import './cookie-manager.css'
+import './workspace.css'
 import './network-management.css'
 
-const REPOLENS_MODULE_ID = 'dev.juck.repolens'
 const frame = document.querySelector<HTMLIFrameElement>('[data-testid="oneweb-module-frame"]')!
 const bridgeState = document.querySelector<HTMLElement>('.bridge-state')!
 const contextLabel = document.querySelector<HTMLElement>('[data-testid="current-context"]')!
@@ -83,7 +91,25 @@ const contextRequest: ContextSubscriberReadyMessage = {
 let moduleHost: ModuleFrameHost | null = null
 let currentSnapshot: ContextSnapshot | null = null
 let activeRecord: InstalledModuleRecord | null = null
-let managementView: ModuleManagementView
+let managementView: ModuleManagementView | null = null
+let renderedDestination = ''
+let previousDestination: WorkspaceSnapshot['destination'] = 'assistant'
+const workspaceRoot = document.querySelector<HTMLElement>('[data-testid="workspace"]')!
+const workspace = new WorkspaceController({ storage: browser.storage.local, listModules: () => managementClient.list() })
+const workspaceView = new WorkspaceView(workspaceRoot, workspace)
+const assistantSurface = document.createElement('section')
+const pageContextClient = new PageContextClient({ sendMessage: message => browser.runtime.sendMessage(message) })
+const pageActionClient = new PageActionClient({ sendMessage: message => browser.runtime.sendMessage(message) })
+const assistantView = new AssistantView(assistantSurface, {
+  client: new AssistantClient({ sendMessage: message => browser.runtime.sendMessage(message) }),
+  permissions: browser.permissions,
+  onConversationOpen: () => workspace.open('assistant'),
+  pageContext: pageContextClient,
+  pageActions: pageActionClient,
+})
+const assistantPort = browser.runtime.connect({ name: ASSISTANT_PORT })
+moduleSurface.remove()
+managerSurface.remove()
 
 function setBridgeLabel(value: string, ready = false) {
   bridgeState.textContent = value
@@ -199,85 +225,168 @@ function handleRuntimeMessage(message: unknown, sender: Runtime.MessageSender) {
 browser.runtime.onMessage.addListener(handleRuntimeMessage)
 
 function openModuleManager() {
-  shell.dataset.view = 'manager'
-  moduleSurface.hidden = true
-  managerSurface.hidden = false
-  manageButton.setAttribute('aria-expanded', 'true')
-  void managementView.refresh()
+  if (workspace.snapshot().destination !== 'settings')
+    previousDestination = workspace.snapshot().destination
+  void workspace.open('settings')
 }
 
 function closeModuleManager() {
-  managementView.clearCookieSession()
-  managementView.clearNetworkView()
-  shell.dataset.view = 'module'
-  managerSurface.hidden = true
-  moduleSurface.hidden = false
-  manageButton.setAttribute('aria-expanded', 'false')
+  void workspace.open(previousDestination === 'settings' ? 'assistant' : previousDestination)
 }
 
-managementView = new ModuleManagementView({
-  root: managerSurface,
-  client: managementClient,
-  browserJournal: browserJournalClient,
-  bookmarkDoctor: bookmarkDoctorClient,
-  clashControl: clashControlClient,
-  networkManagement: {
-    client: networkManagementClient,
-    permissions: browser.permissions,
-    firefox: __FIREFOX__,
-    openTest: () => browser.tabs.create({ url: 'https://webbrowsertools.com/test-webrtc-leak/' }),
-  },
-  pageToolbox: pageToolboxClient,
-  sendToOpenList: sendToOpenListClient,
-  cookieManager: {
-    client: cookieManagerClient,
-    permissions: browser.permissions,
-    firefox: __FIREFOX__,
-  },
-  onRecordChanged: (record) => {
-    if (record.manifest.id === activeRecord?.manifest.id)
+function createManagementView() {
+  return new ModuleManagementView({
+    root: managerSurface,
+    client: managementClient,
+    browserJournal: browserJournalClient,
+    bookmarkDoctor: bookmarkDoctorClient,
+    clashControl: clashControlClient,
+    networkManagement: {
+      client: networkManagementClient,
+      permissions: browser.permissions,
+      firefox: __FIREFOX__,
+      openTest: () => browser.tabs.create({ url: 'https://webbrowsertools.com/test-webrtc-leak/' }),
+    },
+    pageToolbox: pageToolboxClient,
+    sendToOpenList: sendToOpenListClient,
+    videoDubbing: { client: new DubbingClient({ sendMessage: message => browser.runtime.sendMessage(message) }), permissions: browser.permissions },
+    cookieManager: {
+      client: cookieManagerClient,
+      permissions: browser.permissions,
+      firefox: __FIREFOX__,
+    },
+    onRecordChanged: (record) => {
+      void workspace.initialize().then(() => {
+        if (record.manifest.id === activeRecord?.manifest.id && record.manifest.runtime === 'remote-frame')
+          activateModule(record)
+      })
+    },
+    onRecordRemoved: () => { void workspace.initialize() },
+    onRecordInstalled: () => { void workspace.initialize() },
+  })
+}
+
+async function renderDestination(state: WorkspaceSnapshot) {
+  if (state.destination === renderedDestination)
+    return
+  renderedDestination = state.destination
+  destroyModuleFrame()
+  activeRecord = null
+  managementView?.dispose()
+  managementView = null
+  moduleSurface.hidden = true
+  managerSurface.hidden = true
+  assistantSurface.hidden = true
+  manageButton.setAttribute('aria-expanded', String(state.destination === 'settings'))
+  shell.dataset.view = state.destination.startsWith('module:') ? 'module' : 'workspace'
+  moduleName.textContent = 'OneWeb'
+  moduleMark.textContent = '✳'
+  document.title = 'OneWeb · 你的浏览器工作区'
+  setBridgeLabel('本机工作区', true)
+  if (state.destination === 'tools')
+    return
+  workspaceView.outlet.replaceChildren()
+  if (state.destination.startsWith('module:')) {
+    const record = state.modules.find(candidate => `module:${candidate.manifest.id}` === state.destination)
+    if (!record)
+      return
+    updateModuleIdentity(record)
+    if (record.manifest.runtime === 'remote-frame') {
+      workspaceView.outlet.append(moduleSurface)
+      moduleSurface.hidden = false
       activateModule(record)
-  },
-  onRecordRemoved: (record) => {
-    if (record.manifest.id === activeRecord?.manifest.id)
-      showModuleUnavailable(null, '该模块已经从 OneWeb 中移除。')
-  },
+    }
+    else {
+      workspaceView.outlet.append(managerSurface)
+      managerSurface.hidden = false
+      managerSurface.dataset.surface = 'tool'
+      managerSurface.querySelector<HTMLElement>('.manager-heading')!.hidden = true
+      managementView = createManagementView()
+      await managementView.openTool(record.manifest.id)
+    }
+    return
+  }
+  workspaceView.outlet.append(assistantSurface)
+  assistantSurface.hidden = false
+  await assistantView.open(state.destination as AssistantMode)
+  if (state.destination === 'settings' && workspace.snapshot().destination === 'settings') {
+    workspaceView.outlet.append(managerSurface)
+    managerSurface.hidden = false
+    managerSurface.dataset.surface = 'settings'
+    managerSurface.querySelector<HTMLElement>('.manager-heading')!.hidden = false
+    managementView = createManagementView()
+    await managementView.openSettings()
+  }
+}
+workspace.subscribe((state) => {
+  void renderDestination(state)
 })
 
 browser.permissions.onRemoved.addListener((permissions) => {
   if (permissions.permissions?.includes('cookies') || permissions.origins?.length)
-    managementView.clearCookieSession()
+    managementView?.clearCookieSession()
   if (permissions.permissions?.includes('bookmarks') || permissions.origins?.length)
-    void managementView.refresh()
+    void managementView?.refresh()
 })
 
-browser.tabs.onActivated.addListener(() => managementView.clearCurrentCookieSession())
+browser.tabs.onActivated.addListener(() => {
+  managementView?.clearCurrentCookieSession()
+  void assistantView.refreshCurrentPage()
+  void pageContextClient.currentPage().then((page) => {
+    if (!moduleHost)
+      contextLabel.textContent = page.title || '当前网页'
+  }).catch(() => {
+    if (!moduleHost)
+      contextLabel.textContent = '你的浏览器工作区'
+  })
+})
 browser.tabs.onUpdated.addListener((_tabId, change) => {
   if (change.url)
-    managementView.clearCurrentCookieSession()
+    managementView?.clearCurrentCookieSession()
+  if (change.url)
+    void assistantView.refreshCurrentPage()
 })
 browser.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes['oneweb.modules.v1'])
     return
   const records: unknown = changes['oneweb.modules.v1'].newValue
   if (Array.isArray(records) && records.some(record => record?.manifest?.id === 'dev.oneweb.cookie-manager' && !record.enabled))
-    managementView.clearCookieSession()
+    managementView?.clearCookieSession()
 })
 
-manageButton.addEventListener('click', () => managerSurface.hidden ? openModuleManager() : closeModuleManager())
+manageButton.addEventListener('click', () => workspace.snapshot().destination === 'settings' ? closeModuleManager() : openModuleManager())
 closeManagerButton.addEventListener('click', closeModuleManager)
 openManagerButton.addEventListener('click', openModuleManager)
 
 async function initialize() {
-  const records = await managementClient.list()
-  const selectedModuleId = requestedModuleId && requestedModuleId.length <= 128
-    ? requestedModuleId
-    : REPOLENS_MODULE_ID
-  const record = records.find(candidate => candidate.manifest.id === selectedModuleId) || null
-  if (record)
-    activateModule(record)
-  else
-    showModuleUnavailable(null, '所选模块记录不存在，请打开模块管理检查当前状态。')
+  await workspaceView.initialize()
+  if (requestedModuleId && requestedModuleId.length <= 128)
+    await workspace.open(`module:${requestedModuleId}`)
+  await requestCurrentContext()
+  const handoff = new URL(globalThis.location.href).searchParams.get('handoff')
+  if (handoff) {
+    const draft = await pageActionClient.handoff(handoff)
+    await workspace.open(draft.intent === 'translate' ? 'translation' : draft.intent === 'summarize' ? 'reading' : 'assistant')
+    await assistantView.acceptDraft(draft)
+    history.replaceState(null, '', browser.runtime.getURL('/dist/sidebar/index.html'))
+  }
 }
 
-void initialize().catch(() => showModuleUnavailable(null, '模块初始化失败，请稍后重试。'))
+document.querySelector('[data-testid="new-conversation"]')?.addEventListener('click', () => {
+  void assistantView.newConversation().then(() => workspace.open('assistant'))
+})
+document.querySelector('[data-testid="open-workspace-tab"]')?.addEventListener('click', () => {
+  void browser.tabs.create({ url: browser.runtime.getURL('/dist/sidebar/index.html') })
+})
+window.addEventListener('pagehide', () => {
+  assistantView.dispose()
+  assistantPort.disconnect()
+  managementView?.dispose()
+  destroyModuleFrame()
+  workspaceView.dispose()
+  workspace.dispose()
+  browser.runtime.onMessage.removeListener(handleRuntimeMessage)
+}, { once: true })
+void initialize().catch(() => {
+  contextLabel.textContent = '工作区初始化失败，请刷新重试。'
+})

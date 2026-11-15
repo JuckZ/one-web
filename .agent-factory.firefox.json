@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "lock_timeout_seconds": 1800,
+  "checks": [
+    {
+      "name": "firefox-extension",
+      "argv": [
+        "pnpm",
+        "run",
+        "verify:firefox"
+      ],
+      "timeout_seconds": 1800
+    }
+  ]
+}
