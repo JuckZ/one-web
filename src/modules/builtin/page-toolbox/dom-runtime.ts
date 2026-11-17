@@ -14,6 +14,7 @@ import type {
   PasswordVisibilitySettingsV1,
   SelectionCopyReleaseSettingsV1,
 } from './tool-catalog'
+import { createAdditionalPageTool } from './additional-tools'
 import {
   PAGE_TOOL_RUNTIME_BINDING_SCHEMA_VERSION,
   PAGE_TOOLBOX_MODULE_ID,
@@ -462,12 +463,15 @@ function implementationFor(
   context: PageToolDomContext,
   document: Document,
   settings: PageToolJsonValue,
+  binding: PageToolRuntimeBindingV1,
 ): PageToolImplementation {
   if (toolId === 'password-visibility')
     return new PasswordVisibilityTool(context, document, settings)
   if (toolId === 'free-page-edit')
     return new FreePageEditTool(context, document, settings)
-  return new SelectionCopyReleaseTool(context, document, settings)
+  if (toolId === 'selection-copy-release')
+    return new SelectionCopyReleaseTool(context, document, settings)
+  return createAdditionalPageTool(document, binding, toolId, settings)
 }
 
 class ManagedPageTool {
@@ -564,7 +568,7 @@ class ManagedPageTool {
     this.state = start.state
     const context = new PageToolDomContext(this.document, this.binding)
     try {
-      this.implementation = implementationFor(this.binding.toolId as PageToolId, context, this.document, settings)
+      this.implementation = implementationFor(this.binding.toolId as PageToolId, context, this.document, settings, this.binding)
       const success = reducePageToolLifecycle(this.state, {
         type: 'APPLY_SUCCEEDED',
         authority: this.state.authority,

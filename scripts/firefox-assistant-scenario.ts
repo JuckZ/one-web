@@ -37,8 +37,10 @@ export async function runFirefoxAssistantScenario(
       states:Object.fromEntries(Object.entries(storage).filter(([key])=>key.startsWith("oneweb.module-state.v1:"))),
     }));
   `)
-  await driver.execute('document.querySelector("[data-destination=settings]").click();return true')
-  await driver.wait('document.querySelector("[data-testid=assistant-save-provider]")', 'Firefox assistant provider form')
+  // An unconfigured assistant can leave its earlier form mounted while settings loads.
+  // Wait for this navigation's form before filling; native clicks are never replayed.
+  await driver.execute('const old=document.querySelector("[data-testid=assistant-save-provider]");if(old)old.setAttribute("data-firefox-old-provider","true");document.querySelector("[data-destination=settings]").click();return true')
+  await driver.wait('document.querySelector("[data-testid=assistant-workspace] h1")?.textContent==="模型与偏好"&&document.querySelector("[data-testid=assistant-save-provider]:not([data-firefox-old-provider])")', 'Firefox assistant provider form')
   await driver.execute(`
     const fields={"服务地址":arguments[0]+"/assistant/v1/","模型（每行一个）":"firefox-assistant-fixture","API key":"FIREFOX-LOCAL-ONLY"};
     for(const [label,value] of Object.entries(fields)){

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "lock_timeout_seconds": 1800,
+  "checks": [
+    {
+      "name": "assistant-and-smart-apps-browser-regression",
+      "argv": ["pnpm", "exec", "cross-env", "EXTENSION_PATH=artifacts/test/live-chromium", "ONEWEB_TEST_OUTPUT_DIR=artifacts/test-results/llm-regression", "playwright", "test", "e2e/workspace.spec.ts", "e2e/browser-tasks.spec.ts", "e2e/smart-apps.spec.ts", "--retries=0"],
+      "timeout_seconds": 900
+    }
+  ]
+}

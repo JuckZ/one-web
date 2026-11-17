@@ -4,10 +4,9 @@ OneWeb is a modular browser companion that brings search, organization, browser 
 smart analysis into one side workspace. The private root package and browser-facing identities use
 the OneWeb name; RepoLens is one module rather than the host identity.
 
-RepoLens is one OneWeb module, not the product's overall identity. Its packaged bridge uses the
-native Side Panel in Chrome and Edge and `sidebar_action` in Firefox. The module panel embeds only
-the remote RepoLens `/embed` page, while all extension privileges stay in the packaged background
-and content-script code.
+RepoLens is a packaged OneWeb application. It analyzes public GitHub repositories directly from
+the native side panel or workspace tab; no independent RepoLens service is required. User-installed
+remote modules continue to run through the sandboxed remote-frame host.
 
 Brand sources, alternate concepts and design history are archived in
 [`docs/brand/README.md`](docs/brand/README.md).
@@ -19,7 +18,39 @@ The feature decomposition sequence is tracked in
 The manifest/store privacy source of truth is
 [`docs/privacy-data-inventory.md`](docs/privacy-data-inventory.md).
 
+## 扩展与油猴脚本
+
+OneWeb 同一仓库维护浏览器扩展和独立页面工具脚本。Page Toolbox 提供密码查看、网页自由编辑、
+解除选择/复制限制、元素间距测量、夜间阅读减光、已加载隐藏内容查看和选文搜索，共七项默认关闭的工具。
+
+```sh
+pnpm build:userscript   # artifacts/build/userscript/one-web.user.js
+pnpm verify:userscript  # 构建并测试实际发货脚本
+pnpm build:all          # Chromium、Firefox、userscript 三种产物
+```
+
+安装、逐站启用、七项工具、更新、回退与卸载见 [油猴用户指南](docs/userscript-guide.md)。
+维护者使用 [统一发布流程](docs/releases/README.md)；`pnpm release:rehearse` 本地构建和校验三种目标，
+正式版本由精确标签/源码 CI 与完整资产验证后发布到 GitHub Releases。当前尚未创建首个公开 Release，
+可按指南安装本地候选文件。脚本与扩展分别保存设置，脚本无需本地服务或 LLM API。
+
+范围、旧功能处置和验收见 [迁移规格](docs/specs/userscript-distribution.md) 与
+[架构决策](docs/adr/0025-oneweb-userscript-distribution.md)。
+
 ## Unified workspace
+
+**工具 → 新建智能工具** supports **网页标准工具** (page/selection prompt templates) and
+**小应用** (editable or AI-generated interactive HTML in an isolated runtime). Search, filter,
+enable/disable, edit, confirm deletion, and import/export JSON from the same application list.
+Imports are disabled until reviewed. Page tools and AI generation use the model configured in
+Settings and run only after an explicit action. HTML apps cannot access the page, extension APIs,
+network or persistent storage; their interactive state lasts until closed.
+
+Open **RepoLens** from the list, enter a public repository or use the detected GitHub repository,
+then choose **分析项目**. Grant GitHub API access when asked. An optional personal read-only Token
+in its connection settings improves rate limits; it stays in session storage unless remembered.
+Repository overview, similar projects, maintenance metrics, local snapshots and Markdown reports
+work without `repolens-starter` or localhost. See [application spec](docs/specs/smart-apps.md).
 
 OneWeb opens a shared workspace in the native side panel or a full extension tab. The navigation
 contains **助手、阅读、翻译、写作、工具**, with **历史、收藏、设置** below. It remembers the
@@ -101,7 +132,40 @@ The approved requirements, public test seams and implementation evidence are in 
 tasks have their own [SDD](docs/specs/browser-tasks-p0-p1.md) and
 [validation checkpoint](docs/checkpoints/browser-tasks-p0-p1.md).
 
-## RepoLens module development
+## Extension development
+
+### Real Magpie LLM acceptance
+
+Normal unit and browser suites use deterministic HTTP/SSE fixtures. Real-model acceptance is
+separate and opt-in, excluded from ordinary Playwright discovery and CI:
+
+```bash
+ONEWEB_LIVE_LLM=1 pnpm test:live-llm
+# Repeat against the existing production test build:
+ONEWEB_LIVE_LLM=1 pnpm test:live-llm --no-build
+```
+
+This builds `artifacts/test/live-chromium` and opens a disposable Chromium profile. The suite reads
+the effective provider/model from local Codex `config.toml`, including profile overrides. Magpie
+must support `/chat/completions`; the Windows gateway has been validated against this endpoint
+even when Codex itself uses Responses. Python3.11+ reads TOML. Override the path with
+`ONEWEB_LIVE_CODEX_CONFIG`, or choose a model with `ONEWEB_LIVE_LLM_MODEL`. No key is passed on the
+command line.
+
+A temporary loopback relay forwards real requests and response streams without substituting model
+output. It keeps the actual key in Node memory, gives the browser a synthetic alias, rejects
+redirects, and limits the endpoint/model/payload. It preserves the extension's URL security rules
+and does not persist user settings. Tests send only synthetic random facts and an app-generation
+request, checking grounded page/selection output, generated HTML interaction, keyboard use,
+sandbox isolation, persistence and disable behavior. They never compare a canned answer or retry
+a failed generation automatically.
+
+Trace, video and screenshots are off. The JSON report at
+`artifacts/test-results/live-magpie/report.json` contains results and metadata attachments
+(model, status, bytes, duration), not request headers or gateway credentials. Use fixture suites for
+throttling/cancellation/error/byte-boundary regression rather than forcing real paid failures.
+The command fails if its browser subprocess is terminated by signal. Network, quota and model
+compliance failures remain live failures independently of deterministic regressions.
 
 ### 同时开发与测试
 
@@ -125,24 +189,17 @@ Chromium 开发时加载 `artifacts/dev/chromium/`，页面服务为 `http://loc
 | 具名生产构建 | `pnpm build:chromium` → `artifacts/build/chromium/` | `pnpm build:firefox` → `artifacts/build/firefox/` |
 | 浏览器门禁   | `pnpm verify:chromium` → `artifacts/test/chromium/` | `pnpm verify:firefox` → `artifacts/test/firefox/` |
 
-默认 `pnpm build` 仍写入 `extension/`；`pnpm build:all` 顺序生成两种生产构建。
+默认 `pnpm build` 仍写入 `extension/`；`pnpm build:all` 顺序生成 Chromium、Firefox 和 userscript 三种生产构建。
 不同用途的输出互不清理，旧 ZIP/XPI/CRX 保留。同一输出目录只运行一个构建者；
 `pnpm test:watch`、`pnpm typecheck` 和浏览器测试可在开发期间独立执行。
 Chromium 门禁的 trace 与截图位于 `artifacts/test-results/chromium/`。
 浏览器门禁不依赖失败重试。Linux Firefox 媒体测试会创建并清理测试专用的虚拟音频输出；
 已配置 `PULSE_SINK` 时使用指定输出。缺少音频服务时，可通过 `PULSE_SERVER` / `PULSE_SINK`
 指定测试端点，测试不会更改默认音频设备。
-Chromium 验收使用独立本机端口 14747，允许开发中的 RepoLens 服务继续使用 4747。已有验收包时，可传入对应目录定向执行 E2E：
+Chromium 远程模块协议验收使用独立本机 fixture 端口 14747；RepoLens 内置应用不依赖这个服务。已有验收包时，可传入对应目录定向执行 E2E：
 
 ```bash
 EXTENSION_PATH=artifacts/test/chromium pnpm test:e2e e2e/browser-tasks.spec.ts --retries=0
-```
-
-Start RepoLens first:
-
-```bash
-cd /path/to/repolens-starter
-npm start
 ```
 
 Build Chromium and load `extension/` as an unpacked extension:
@@ -152,21 +209,10 @@ cd /path/to/one-web
 pnpm build
 ```
 
-Local builds use `http://127.0.0.1:4747`. A release build must fix the exact HTTPS RepoLens origin
-into the manifest and every bundle:
-
-```bash
-REPOLENS_ORIGIN=https://repolens.example.com \
-  REPOLENS_REQUIRE_HTTPS=true pnpm build
-```
-
-`REPOLENS_ORIGIN` accepts an origin only: no credentials, path, query or fragment. Non-loopback HTTP
-is rejected. The deploy workflow reads the production value from the GitHub Actions repository
-variable `REPOLENS_ORIGIN` and fails closed when it is absent or not HTTPS.
-
-Add the resulting `chrome-extension://<id>` to RepoLens `EXTENSION_ORIGINS`, then restart
-RepoLens. Development Chromium IDs are derived from the local unpacked-extension identity and must
-not be documented as a stable product ID.
+RepoLens is bundled into this build. No local Node service, deployment origin or extension/server
+pairing is required. Release CI no longer requires a `REPOLENS_ORIGIN` repository variable.
+That legacy build option remains available for remote-platform conformance fixtures; it does not
+grant a production host permission or configure the packaged RepoLens application.
 
 Build, lint and package Firefox separately:
 
@@ -183,8 +229,7 @@ explicit remote modules/controllers; OneWeb does not ship product telemetry. Chr
 at 148 and uses the native `browser` namespace. A small platform adapter falls back to modern
 `chrome` for compatible Chromium hosts without bundling the archived Mozilla polyfill.
 
-Firefox uses the stable add-on ID `one-web@juckz.local`; its temporary local
-`moz-extension://<uuid>` must also be added to RepoLens `EXTENSION_ORIGINS` for local testing.
+Firefox uses the stable add-on ID `one-web@juckz.local`.
 The packaged XPI is `extension.xpi` and the unpacked build is in `artifacts/build/firefox/`.
 
 ## Video Dubbing
@@ -278,10 +323,11 @@ The browser tests load the production extension in disposable profiles. Workspac
 configuration, safe streaming, history, explicit page/selection capture, editor preview/apply,
 bilingual recovery, site hiding, permission revocation and owner disconnect against local fixtures.
 They also save screenshots and traces in the selected test output directory.
-The existing module tests visit a GitHub repository fixture, exercise SPA route
-changes and exact-duplicate navigation, opens the packaged 420px panel page, verifies the iframe
-handshake, rejects a forged origin, confirms cached-summary-first behavior, and triggers a deep
-analysis. Firefox additionally uses a `tabs.onUpdated` URL fallback so MV3 event-page suspension
+Remote-module conformance tests install a separate reference module, exercise GitHub SPA navigation,
+verify the private iframe handshake, reject forged origins and preserve isolation. Native RepoLens
+tests intercept only fixed GitHub HTTP requests at the real worker network boundary and verify
+analysis, cache, report export and partial results without a localhost service. Application tests
+exercise explicit page/selection tools and an actual generated HTML sandbox. Firefox additionally uses a `tabs.onUpdated` URL fallback so MV3 event-page suspension
 cannot drop a full-navigation context update; SPA transitions still use the content script.
 
 ## Data and security boundaries
@@ -294,11 +340,10 @@ Background / Service Worker
   ContextBroker validates source, normalizes, stores per-tab snapshot, removes duplicates
         ↓ generic context snapshot
 Packaged Side Panel / Firefox Sidebar
-  intersects provider fields × manifest request × installed grants
-  exact origin/source + protocol v1 + one-time session nonce
-        ↓ MODULE_INIT transfers a private MessageChannel
-RepoLens /embed
-  sandboxed remote origin, no chrome/browser API access
+  ├─ RepoLens builtin → finite trusted background → fixed public GitHub API
+  ├─ page prompt tool → explicit capture + existing configured Assistant provider
+  ├─ HTML mini app → opaque sandbox loader → closed nested HTML sandbox
+  └─ remote module → approved field intersection + private MessageChannel
 ```
 
 - No iframe or report UI is injected into GitHub's DOM.
@@ -306,16 +351,17 @@ RepoLens /embed
   separately injected runtime reads page text or selected editor text after explicit user actions
   and exact-site authorization; only an explicit model request sends it to the chosen provider.
 - The manifest grants only `activeTab`, `scripting`, `storage`, `tabs`, and Chromium `sidePanel`,
-  plus `contextMenus` and exact GitHub and RepoLens host permissions. Assistant, Page Toolbox and
+  plus `contextMenus` and the exact GitHub page host permission. GitHub API analysis, Assistant, Page Toolbox and
   Video Dubbing injections use fixed packaged entries and explicit exact-origin authorization.
 - `cookies` is optional and requested only through Cookie Manager's explicit authorization action.
 - `privacy` is optional and requested only through Network Management's explicit WebRTC action.
-- The initial RepoLens handshake checks exact `event.origin`, `event.source`, module ID and protocol
+- The remote-module handshake checks exact `event.origin`, `event.source`, module ID and protocol
   version; later messages use the transferred port and still require the module ID and nonce.
-- Production uses HTTPS, explicit extension origins, `AUTH_MODE=session`, a one-time authorization
-  code and a short-lived Bearer session. The GitHub Token, search credentials and model credentials
-  remain server-only for RepoLens. The independent assistant uses user-supplied provider keys held
-  by its packaged background controller; those credentials never enter the remote-module bridge.
+- RepoLens uses only public GitHub APIs and an optional user-owned read-only Token held in the
+  background, session-only unless explicitly remembered. Assistant provider keys follow the same
+  existing user choice. No credentials enter a remote-module or HTML-app bridge. The HTML loader
+  is bundled as a classic script so the opaque Firefox sandbox can load it; nested CSP denies app
+  network and browser authority on both browsers.
 
 Implementation details and remaining deployment considerations are documented in
 [`docs/architecture.md`](docs/architecture.md).

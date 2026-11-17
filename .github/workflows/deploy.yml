@@ -19,9 +19,6 @@ jobs:
     name: Build release artifact
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      REPOLENS_ORIGIN: ${{ vars.REPOLENS_ORIGIN }}
-      REPOLENS_REQUIRE_HTTPS: 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -51,7 +48,19 @@ jobs:
       - name: Unit tests
         run: pnpm run test:coverage
 
+      - name: Allow isolated default-port HTTP fixtures
+        run: sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0
+
+      - name: Prepare isolated Firefox audio output
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pulseaudio
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=oneweb_deploy
+
       - name: Build and verify Firefox extension
+        env:
+          PULSE_SINK: oneweb_deploy
         run: pnpm run verify:firefox
 
       - name: Package Firefox extension
@@ -65,6 +74,9 @@ jobs:
       - name: Package Chromium extension
         run: pnpm run pack:zip
 
+      - name: Build standalone userscript
+        run: pnpm run build:userscript
+
       - name: Upload browser artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -72,6 +84,8 @@ jobs:
           path: |
             extension.zip
             oneweb-firefox.xpi
+            artifacts/build/userscript/one-web.user.js
+            artifacts/build/userscript/one-web.meta.js
           if-no-files-found: error
           retention-days: 14
 

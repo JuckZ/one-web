@@ -17,7 +17,14 @@ describe('browser-target extension manifests', () => {
     expect(manifest.side_panel).toEqual({ default_path: 'dist/sidebar/index.html' })
     expect(manifest.sidebar_action).toBeUndefined()
     expect(manifest.permissions).toContain('sidePanel')
-    expect(manifest.host_permissions).toContain('https://repolens.example.com/*')
+    expect(manifest.host_permissions).toEqual(['https://github.com/*'])
+    expect(manifest.optional_host_permissions).toContain('https://*/*')
+    expect(manifest.sandbox).toEqual({ pages: ['dist/apps/sandbox.html'] })
+    expect(manifest.content_security_policy).toMatchObject({
+      sandbox: expect.stringContaining('connect-src \'none\''),
+      extension_pages: expect.stringContaining('frame-src \'self\''),
+    })
+    expect(JSON.stringify(manifest)).not.toContain('https://repolens.example.com')
   })
 
   it('generates a Firefox MV3 background and native sidebar', async () => {
@@ -40,11 +47,13 @@ describe('browser-target extension manifests', () => {
       default_icon: './assets/icon-128.png',
     })
     expect(manifest.permissions).not.toContain('sidePanel')
+    expect(manifest.sandbox).toEqual({ pages: ['dist/apps/sandbox.html'] })
+    expect((manifest.content_security_policy as { sandbox?: string }).sandbox).toBeUndefined()
     expect(manifest.browser_specific_settings?.gecko?.id).toBe('one-web@juckz.local')
     expect(manifest.browser_specific_settings?.gecko?.strict_min_version).toBe('142.0')
     expect(manifest.browser_specific_settings?.gecko).toMatchObject({
       data_collection_permissions: {
-        required: ['authenticationInfo', 'browsingActivity', 'websiteContent', 'personalCommunications'],
+        required: ['authenticationInfo', 'browsingActivity', 'websiteContent', 'personalCommunications', 'searchTerms'],
       },
     })
   })

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "lock_timeout_seconds": 1800,
+  "checks": [
+    {
+      "name": "real-tampermonkey-install-update",
+      "argv": [
+        "pnpm",
+        "run",
+        "test:userscript:manager"
+      ],
+      "timeout_seconds": 180
+    }
+  ]
+}

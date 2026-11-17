@@ -28,6 +28,7 @@
     "build:devtools-page": "vite build --config vite.config.devtools-page.ts",
     "build:web": "vite build",
     "build:js": "run-p build:js:*",
+    "build:js:apps": "vite build --config vite.config.apps.ts",
     "build:js:context": "vite build --config vite.config.content.ts",
     "build:js:assistant": "vite build --config vite.config.assistant.ts",
     "build:js:video-dubbing": "vite build --config vite.config.video-dubbing.ts",
@@ -43,6 +44,7 @@
     "lint": "eslint --cache --cache-location node_modules/.cache/eslint .",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:live-llm": "esno scripts/test-live-llm.ts",
     "test:e2e:firefox": "esno scripts/verify-firefox-page-toolbox.ts",
     "postinstall": "simple-git-hooks",
     "typecheck": "tsc --noEmit --pretty",
@@ -58,8 +60,17 @@
     "dev:start": "run-p dev:prepare dev:background dev:devtools dev:devtools-page dev:web dev:js",
     "dev:test": "run-p dev test:watch",
     "build:chromium": "cross-env EXTENSION=chromium ONEWEB_EXTENSION_DIR=artifacts/build/chromium pnpm run build",
-    "build:all": "run-s build:chromium build:firefox",
-    "test:e2e:strict": "playwright test --retries=0"
+    "build:all": "run-s build:chromium build:firefox build:userscript",
+    "test:e2e:strict": "playwright test --retries=0",
+    "build:userscript": "vite build --config vite.config.userscript.ts",
+    "test:e2e:userscript": "playwright test --config playwright.userscript.config.ts",
+    "verify:userscript": "run-s build:userscript test:e2e:userscript",
+    "verify:firefox:toolbox": "cross-env FIREFOX_SCENARIO=toolbox pnpm run verify:firefox",
+    "release:prepare": "run-s build:all && esno scripts/release-artifacts.ts prepare",
+    "release:rehearse": "run-s build:all && esno scripts/release-artifacts.ts prepare --local",
+    "release:verify": "esno scripts/release-artifacts.ts verify",
+    "test:release": "vitest run src/utils/__tests__/release-artifacts.test.ts src/utils/__tests__/verify-pre-release-identity.test.ts src/utils/__tests__/userscript-manager-runner.test.ts && python3 -B -m unittest discover -s scripts/tests -v",
+    "test:userscript:manager": "pnpm build:userscript && node scripts/test-userscript-manager.cjs"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm lint-staged"

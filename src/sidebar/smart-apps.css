@@ -1,0 +1,376 @@
+.smart-apps {
+  padding: 24px;
+  min-width: 0;
+}
+.smart-apps-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.smart-apps h1 {
+  margin: 10px 0;
+  font-size: 27px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+.smart-apps-heading p,
+.smart-app-help {
+  color: var(--workspace-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.smart-apps-toolbar,
+.smart-apps-filters,
+.smart-apps-footer,
+.smart-app-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.smart-apps-toolbar {
+  margin-bottom: 18px;
+}
+.smart-apps-toolbar input {
+  flex: 1;
+  min-width: 120px;
+}
+.smart-apps input,
+.smart-apps textarea {
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--workspace-line);
+  border-radius: 9px;
+  background: var(--workspace-panel);
+  color: inherit;
+  font: inherit;
+}
+.smart-apps-filters button[aria-pressed='true'] {
+  background: var(--workspace-accent);
+  color: white;
+}
+.smart-apps-list {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--workspace-line);
+  border-radius: 14px;
+  background: var(--workspace-line);
+}
+.smart-app-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px;
+  background: var(--workspace-panel);
+  min-width: 0;
+}
+.smart-app-open {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.smart-app-mark {
+  display: grid;
+  place-items: center;
+  grid-row: span 2;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: #eaf0e8;
+  color: var(--workspace-accent);
+  font-weight: 650;
+}
+.smart-app-name {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.smart-app-open small {
+  grid-column: 2 / -1;
+  color: var(--workspace-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.smart-app-kind {
+  color: var(--workspace-muted);
+  font-size: 10px;
+}
+.smart-app-switch {
+  flex: 0 0 30px;
+  position: relative;
+  width: 30px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 20px;
+  background: #c3cbc4;
+  cursor: pointer;
+}
+.smart-app-switch::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: white;
+  content: '';
+}
+.smart-app-switch[aria-checked='true'] {
+  background: var(--workspace-accent);
+}
+.smart-app-switch[aria-checked='true']::after {
+  left: 15px;
+}
+.smart-app-row-actions button {
+  padding: 5px 8px;
+  font-size: 11px;
+}
+.smart-apps-status {
+  color: var(--workspace-accent);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.smart-apps-status:empty {
+  display: none;
+}
+.smart-apps-footer {
+  margin-top: 20px;
+}
+.smart-apps-empty {
+  padding: 24px;
+  color: var(--workspace-muted);
+  line-height: 1.7;
+}
+.smart-app-dialog {
+  width: min(760px, calc(100vw - 36px));
+  max-height: calc(100dvh - 48px);
+  box-sizing: border-box;
+  padding: 26px;
+  border: 1px solid var(--workspace-line);
+  border-radius: 20px;
+  background: var(--workspace-bg, #f7f8f5);
+  color: var(--workspace-text, #26352e);
+}
+.smart-app-dialog:modal {
+  overscroll-behavior: contain;
+}
+.smart-app-dialog::backdrop {
+  background: #182c2480;
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+.smart-app-dialog-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.smart-app-dialog-heading h2 {
+  margin: 0;
+  font-size: 23px;
+}
+.smart-app-type-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 22px;
+}
+.smart-app-type-card {
+  padding: 25px 20px;
+  border: 1px solid var(--workspace-line);
+  border-radius: 15px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: var(--workspace-panel);
+  cursor: pointer;
+}
+.smart-app-type-card:hover {
+  border-color: var(--workspace-accent);
+  background: #edf3ea;
+}
+.smart-app-type-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  color: #6950bc;
+  background: #ede8fa;
+  font-size: 25px;
+}
+.smart-app-type-card h3 {
+  margin: 20px 0 8px;
+  font-weight: 600;
+}
+.smart-app-type-card p {
+  font-size: 13px;
+}
+.smart-app-type-card small {
+  display: block;
+  margin-top: 28px;
+  color: var(--workspace-muted);
+  line-height: 1.7;
+}
+.smart-app-form {
+  display: grid;
+  gap: 15px;
+  margin-top: 24px;
+}
+.smart-app-form label {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+}
+.smart-app-form textarea {
+  min-height: 85px;
+  resize: vertical;
+  width: 100%;
+}
+.smart-app-form .smart-app-code {
+  min-height: 180px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.smart-app-preview-container {
+  min-height: 400px;
+  height: min(620px, 70dvh);
+  margin-top: 20px;
+  border: 1px solid var(--workspace-line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: white;
+}
+.smart-app-preview-container iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.smart-app-answer {
+  padding: 20px;
+  border: 1px solid var(--workspace-line);
+  border-radius: 12px;
+  background: var(--workspace-panel);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.8;
+}
+@media (width < 520px) {
+  .smart-apps {
+    padding: 18px 14px;
+  }
+  .smart-apps-heading h1 {
+    font-size: 24px;
+  }
+  .smart-app-type-grid {
+    grid-template-columns: 1fr;
+  }
+  .smart-app-type-card {
+    padding: 18px;
+  }
+  .smart-app-type-card small {
+    margin-top: 15px;
+  }
+  .smart-app-dialog {
+    padding: 20px;
+  }
+  .smart-app-row {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .smart-app-row-actions {
+    flex-basis: 100%;
+    margin-left: 40px;
+  }
+  .smart-app-open {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+  .smart-app-kind {
+    grid-column: 2;
+  }
+  .smart-app-open small {
+    grid-column: 2;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  .smart-app-type-card:hover {
+    background: #25352c;
+  }
+  .smart-app-type-icon {
+    background: #362d4b;
+    color: #c1a8ff;
+  }
+}
+.repolens-workspace .workspace-note {
+  position: static;
+  margin: 16px 0;
+  padding: 10px 14px;
+}
+.repolens-workspace .workspace-page-heading {
+  margin: 0 0 24px;
+}
+.repolens-form {
+  display: grid;
+  gap: 10px;
+}
+.repolens-form .workspace-search {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+}
+.repolens-workspace .assistant-heading {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.repolens-settings {
+  margin-top: 24px;
+  padding: 16px;
+  border: 1px solid var(--workspace-line);
+  border-radius: 12px;
+}
+.repolens-settings form {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+.repolens-settings input[type='password'] {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+}
+.repolens-workspace table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.repolens-workspace td,
+.repolens-workspace th {
+  padding: 10px 6px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--workspace-line);
+}
+.repolens-workspace pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.repolens-workspace a {
+  color: var(--workspace-accent);
+  overflow-wrap: anywhere;
+}

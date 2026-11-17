@@ -1,4 +1,6 @@
 import type { Runtime } from 'webextension-polyfill'
+import { SmartAppsController } from '~/apps/controller'
+import { handleSmartAppsMessage } from '~/apps/protocol'
 import { PAGE_CHANNEL } from '~/assistantContent/runtime'
 import { ASSISTANT_PORT } from '~/modules/builtin/assistant/contracts'
 import { AssistantController } from '~/modules/builtin/assistant/controller'
@@ -42,6 +44,8 @@ import {
   type PageToolboxHostPort,
   type PageToolboxScriptingApi,
 } from '~/modules/builtin/page-toolbox'
+import { RepoLensController } from '~/modules/builtin/repolens/controller'
+import { handleRepoLensMessage } from '~/modules/builtin/repolens/protocol'
 import {
   createSendToOpenListProfileStore,
   createSendToOpenListResponse,
@@ -97,6 +101,19 @@ const pageContextController = new PageContextController({
     .sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))[0],
 })
 const sessionEntries: Record<string, unknown> = {}
+const smartAppsController = new SmartAppsController({ storage: browser.storage.local })
+const repoLensController = new RepoLensController({
+  storage: browser.storage.local,
+  secrets: browser.storage.session ?? {
+    get: async key => ({ [key]: sessionEntries[key] }),
+    set: async (values) => { Object.assign(sessionEntries, values) },
+  },
+  permissions: browser.permissions,
+  enabled: async () => {
+    const record = await defaultModuleRegistry.get('dev.juck.repolens')
+    return record?.enabled === true && record.manifest.runtime === 'builtin'
+  },
+})
 assistantController = new AssistantController({
   storage: browser.storage.local,
   secrets: browser.storage.session ?? {
@@ -141,6 +158,8 @@ for (const area of [browser.storage.local, browser.storage.session]) {
 }
 builtinOriginUsage.register('assistant', pattern => assistantController.usesOriginPattern(pattern))
 builtinOriginUsage.register('vision', pattern => visionController.usesOriginPattern(pattern))
+builtinOriginUsage.register('repolens', async pattern => pattern === 'https://api.github.com/*'
+  && (await defaultModuleRegistry.get('dev.juck.repolens'))?.enabled === true)
 builtinOriginUsage.register('page-assistant', async (pattern) => {
   const preferences = await pageActionController.readPreferences()
   return preferences.enabled && preferences.sites.some(site => site.enabled && `${site.origin}/*` === pattern)
@@ -253,6 +272,8 @@ const videoDubbingController = new VideoDubbingController({
 builtinOriginUsage.register('video-dubbing', pattern => videoDubbingController.usesOriginPattern(pattern))
 const moduleManager = new ModuleManager(defaultModuleRegistry, moduleInstaller, {
   onInstalledRecordChanged: async (record) => {
+    if (record.manifest.id === 'dev.juck.repolens' && !record.enabled)
+      repoLensController.invalidate()
     if (record.manifest.id === VIDEO_DUBBING_MODULE_ID)
       videoDubbingController.invalidate()
     if (record.manifest.id === COOKIE_MANAGER_MODULE_ID)
@@ -316,6 +337,12 @@ async function updateTabContext(tabId: number, href: string | undefined) {
 }
 
 browser.runtime.onMessage.addListener((message: unknown, sender: Runtime.MessageSender) => {
+  const appsResponse = handleSmartAppsMessage(smartAppsController, message, sender, browser.runtime.id, extensionBaseUrl)
+  if (appsResponse)
+    return appsResponse
+  const repoLensResponse = handleRepoLensMessage(repoLensController, message, sender, browser.runtime.id, extensionBaseUrl)
+  if (repoLensResponse)
+    return repoLensResponse
   const networkResponse = handleNetworkManagementMessage(networkManagementController, message, sender, browser.runtime.id, extensionBaseUrl)
   if (networkResponse)
     return networkResponse
@@ -677,6 +704,7 @@ browser.runtime.onConnect.addListener((port) => {
     }
     const owner = port.sender.documentId ?? port.sender.url!
     port.onDisconnect.addListener(() => {
+      repoLensController.cancelOwner(owner)
       assistantController.cancelOwner(owner)
       void pageContextController.restorePage(owner)
     })
@@ -756,6 +784,8 @@ browser.tabs.onRemoved.addListener((tabId) => {
 })
 
 browser.permissions.onRemoved.addListener((permissions) => {
+  if (permissions.origins?.length)
+    repoLensController.invalidate()
   void assistantController.permissionsChanged()
   void pageActionController.permissionsChanged()
   if (permissions.origins?.length) {

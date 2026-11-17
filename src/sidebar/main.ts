@@ -1,5 +1,6 @@
 import type { Runtime } from 'webextension-polyfill'
 import { storageModuleCapabilityCatalog } from '@oneweb/module-sdk'
+import { SmartAppsClient } from '~/apps/protocol'
 import { ASSISTANT_PORT } from '~/modules/builtin/assistant/contracts'
 import { AssistantClient } from '~/modules/builtin/assistant/protocol'
 import { BookmarkDoctorClient } from '~/modules/builtin/bookmark-doctor'
@@ -8,6 +9,7 @@ import { ClashControlClient } from '~/modules/builtin/clash-control'
 import { CookieManagerClient } from '~/modules/builtin/cookie-manager/protocol'
 import { NetworkManagementClient } from '~/modules/builtin/network-management/protocol'
 import { PageToolboxClient } from '~/modules/builtin/page-toolbox'
+import { RepoLensClient } from '~/modules/builtin/repolens/protocol'
 import { SendToOpenListClient } from '~/modules/builtin/send-to-openlist'
 import { DubbingClient } from '~/modules/builtin/video-dubbing/protocol'
 import { type ContextSnapshot, createDefaultContextBroker } from '~/modules/context-broker'
@@ -27,11 +29,14 @@ import { PageContextClient } from '~/workspace/page-context'
 import { WorkspaceController, type WorkspaceSnapshot, WorkspaceView } from '~/workspace/workspace'
 import { type AssistantMode, AssistantView } from './assistant-view'
 import { ModuleManagementView } from './module-management-view'
+import { RepoLensView } from './repolens-view'
+import { SmartAppsView } from './smart-apps-view'
 import './video-dubbing.css'
 import './sidebar.css'
 import './cookie-manager.css'
 import './workspace.css'
 import './network-management.css'
+import './smart-apps.css'
 
 const frame = document.querySelector<HTMLIFrameElement>('[data-testid="oneweb-module-frame"]')!
 const bridgeState = document.querySelector<HTMLElement>('.bridge-state')!
@@ -108,6 +113,27 @@ const assistantView = new AssistantView(assistantSurface, {
   pageActions: pageActionClient,
 })
 const assistantPort = browser.runtime.connect({ name: ASSISTANT_PORT })
+const appsSurface = document.createElement('section')
+const smartAppsView = new SmartAppsView(appsSurface, {
+  client: new SmartAppsClient({ sendMessage: message => browser.runtime.sendMessage(message) }),
+  assistant: new AssistantClient({ sendMessage: message => browser.runtime.sendMessage(message) }),
+  page: pageContextClient,
+  permissions: browser.permissions,
+  sandboxUrl: browser.runtime.getURL('/dist/apps/sandbox.html'),
+  openModule: id => workspace.open(`module:${id}`),
+  setModuleEnabled: async (id, enabled) => {
+    const result = await managementClient.setEnabled(id, enabled)
+    if (!result.ok)
+      throw new Error('无法更新模块状态')
+  },
+  settings: () => workspace.open('settings'),
+})
+workspaceView.setToolsRenderer((outlet, state) => {
+  if (!outlet.contains(appsSurface))
+    outlet.replaceChildren(appsSurface)
+  void smartAppsView.open(state.modules)
+})
+let repoLensView: RepoLensView | null = null
 moduleSurface.remove()
 managerSurface.remove()
 
@@ -205,6 +231,7 @@ function acceptContextSnapshot(message: ContextSnapshotMessage) {
   snapshot.revision = message.revision
   currentSnapshot = snapshot
   const repository = snapshot.contexts['github.repository']
+  repoLensView?.updateContext(typeof repository?.repo === 'string' ? repository.repo : null)
   if (moduleHost)
     contextLabel.textContent = typeof repository?.repo === 'string' ? repository.repo : '等待页面上下文'
   sendCurrentContext()
@@ -256,6 +283,8 @@ function createManagementView() {
       firefox: __FIREFOX__,
     },
     onRecordChanged: (record) => {
+      if (workspace.snapshot().destination === `module:${record.manifest.id}`)
+        renderedDestination = ''
       void workspace.initialize().then(() => {
         if (record.manifest.id === activeRecord?.manifest.id && record.manifest.runtime === 'remote-frame')
           activateModule(record)
@@ -270,6 +299,10 @@ async function renderDestination(state: WorkspaceSnapshot) {
   if (state.destination === renderedDestination)
     return
   renderedDestination = state.destination
+  if (state.destination !== 'tools')
+    smartAppsView.dispose()
+  repoLensView?.dispose()
+  repoLensView = null
   destroyModuleFrame()
   activeRecord = null
   managementView?.dispose()
@@ -291,7 +324,24 @@ async function renderDestination(state: WorkspaceSnapshot) {
     if (!record)
       return
     updateModuleIdentity(record)
-    if (record.manifest.runtime === 'remote-frame') {
+    if (!record.enabled && (record.manifest.runtime === 'remote-frame' || record.manifest.id === 'dev.juck.repolens')) {
+      workspaceView.outlet.append(moduleSurface)
+      moduleSurface.hidden = false
+      showModuleUnavailable(record, '你可以在应用列表或模块管理中重新启用它。')
+    }
+    else if (record.manifest.runtime === 'builtin' && record.manifest.id === 'dev.juck.repolens') {
+      const surface = document.createElement('section')
+      workspaceView.outlet.append(surface)
+      repoLensView = new RepoLensView(surface, {
+        client: new RepoLensClient({ sendMessage: message => browser.runtime.sendMessage(message) }),
+        permissions: browser.permissions,
+      })
+      await repoLensView.open()
+      const repository = currentSnapshot?.contexts['github.repository']
+      repoLensView?.updateContext(typeof repository?.repo === 'string' ? repository.repo : null)
+      setBridgeLabel('本机应用', true)
+    }
+    else if (record.manifest.runtime === 'remote-frame') {
       workspaceView.outlet.append(moduleSurface)
       moduleSurface.hidden = false
       activateModule(record)
@@ -326,10 +376,11 @@ browser.permissions.onRemoved.addListener((permissions) => {
   if (permissions.permissions?.includes('cookies') || permissions.origins?.length)
     managementView?.clearCookieSession()
   if (permissions.permissions?.includes('bookmarks') || permissions.origins?.length)
-    void managementView?.refresh()
+    void managementView?.refresh({ preserveFeedback: true })
 })
 
 browser.tabs.onActivated.addListener(() => {
+  void smartAppsView.pageChanged()
   managementView?.clearCurrentCookieSession()
   void assistantView.refreshCurrentPage()
   void pageContextClient.currentPage().then((page) => {
@@ -342,16 +393,28 @@ browser.tabs.onActivated.addListener(() => {
 })
 browser.tabs.onUpdated.addListener((_tabId, change) => {
   if (change.url)
+    void smartAppsView.pageChanged()
+  if (change.url)
     managementView?.clearCurrentCookieSession()
   if (change.url)
     void assistantView.refreshCurrentPage()
 })
 browser.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !changes['oneweb.modules.v1'])
+  if (area !== 'local')
+    return
+  if (changes['oneweb.smart-apps.v1'])
+    void smartAppsView.libraryChanged()
+  if (!changes['oneweb.modules.v1'])
     return
   const records: unknown = changes['oneweb.modules.v1'].newValue
   if (Array.isArray(records) && records.some(record => record?.manifest?.id === 'dev.oneweb.cookie-manager' && !record.enabled))
     managementView?.clearCookieSession()
+  if (repoLensView && Array.isArray(records) && records.some(record => record?.manifest?.id === 'dev.juck.repolens' && !record.enabled)) {
+    repoLensView.dispose()
+    repoLensView = null
+    renderedDestination = ''
+    void workspace.initialize()
+  }
 })
 
 manageButton.addEventListener('click', () => workspace.snapshot().destination === 'settings' ? closeModuleManager() : openModuleManager())
@@ -380,6 +443,8 @@ document.querySelector('[data-testid="open-workspace-tab"]')?.addEventListener('
 })
 window.addEventListener('pagehide', () => {
   assistantView.dispose()
+  smartAppsView.dispose()
+  repoLensView?.dispose()
   assistantPort.disconnect()
   managementView?.dispose()
   destroyModuleFrame()

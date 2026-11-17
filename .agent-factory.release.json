@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "lock_timeout_seconds": 1800,
+  "checks": [
+    {
+      "name": "release-regressions",
+      "argv": ["pnpm", "run", "test:release"],
+      "timeout_seconds": 120
+    },
+    {
+      "name": "complete-local-release-rehearsal",
+      "argv": ["pnpm", "run", "release:rehearse"],
+      "timeout_seconds": 900
+    }
+  ]
+}

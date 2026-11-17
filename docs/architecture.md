@@ -1,7 +1,7 @@
 # OneWeb Architecture Roadmap
 
-The long-term product architecture treats RepoLens as the first remote module rather than a
-hard-coded product identity. The module model, trust boundaries, manifest format and evolution
+RepoLens is now a packaged builtin, alongside a separate library of page prompt tools and isolated
+HTML mini apps ([ADR-0024](adr/0024-smart-apps-and-packaged-repolens.md)). The module model, trust boundaries, manifest format and evolution
 plan are specified in [`module-platform-architecture.md`](module-platform-architecture.md).
 
 ## Unified workspace and assistant
@@ -127,7 +127,13 @@ fixture evidence separately from live platform/model and Firefox validation.
 
 ## Current RepoLens implementation
 
-The RepoLens tool retains its existing context bridge:
+The current RepoLens tool uses its packaged view and finite background controller, described in
+[the application spec](specs/smart-apps.md). It requests public GitHub APIs directly after an explicit
+analysis action and optional permission grant. The legacy remote seeded record upgrades by ID to
+the builtin. There is no runtime dependency on the independent RepoLens server.
+
+The following bridge flow describes the retained remote-platform conformance fixture and legacy
+independent RepoLens integration:
 
 1. `src/modules/providers/github-repository-observer.ts` observes GitHub History API, Turbo and
    PJAX navigation with a short debounce. It emits a provider update or an explicit removal when a
@@ -246,3 +252,11 @@ field-filtered context bridge.
 - Convert broad host permissions into optional host permissions where product flows allow it.
 - Add contract tests for message payloads and storage migrations.
 - Raise coverage thresholds as critical background/content logic gains tests.
+
+## Standalone userscript target
+
+Page Toolbox's seven finite DOM tools are shared by the extension and a separate locally bundled
+userscript IIFE. `src/userscript/` supplies only GM storage/menu, explicit per-origin settings and
+document lifecycle. It does not emulate extension APIs or reuse background RPC. Manager installation
+grants and OneWeb's application-level site switch are separate. Browser-privileged tools remain
+extension-only. See [ADR-0025](adr/0025-oneweb-userscript-distribution.md).

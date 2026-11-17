@@ -602,7 +602,7 @@ describe('module management view', () => {
     expect(pageToolbox.status).toHaveBeenCalledTimes(2)
   })
 
-  it('edits only the three finite Page Toolbox controls and saves one complete revisioned document', async () => {
+  it('edits finite Page Toolbox controls and saves one complete revisioned document', async () => {
     const snapshot = pageToolboxSnapshot('ready', 7)
     const pageToolbox = createPageToolboxActions(snapshot)
     const root = createRoot()
@@ -643,6 +643,10 @@ describe('module management view', () => {
         'password-visibility': { gesture: 'triple-click' },
         'free-page-edit': { mode: 'rich-text' },
         'selection-copy-release': { selection: true, copy: true, contextMenu: false },
+        'element-spacing': {},
+        'night-reading': { strength: 'gentle' },
+        'hidden-content': {},
+        'selection-search': {},
       },
     })
     await vi.waitFor(() => expect(root.querySelector('[data-testid="page-toolbox-control-message"]')?.textContent).toContain('原子保存'))
@@ -1503,6 +1507,9 @@ describe('module management view', () => {
     await vi.waitFor(() => expect(onRecordRemoved).toHaveBeenCalledWith(record))
     expect(dialog.hidden).toBe(true)
     expect(root.querySelector('[data-module-id="dev.juck.fixture"]')).toBeNull()
+    expect(root.querySelector('[data-testid="module-manager-status"]')?.textContent).toBe('Fixture 已移除')
+    await view.refresh({ preserveFeedback: true })
+    expect(root.querySelector('[data-testid="module-manager-status"]')?.textContent).toBe('Fixture 已移除')
   })
 
   it('reviews text-only manifest copy and installs only selected grants', async () => {

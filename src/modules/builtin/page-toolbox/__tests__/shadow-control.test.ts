@@ -157,7 +157,7 @@ describe('page Toolbox closed Shadow control surface', () => {
     const { root, surface } = createSurface()
     const launcher = root.querySelector<HTMLButtonElement>('button')!
     const host = surface.hostNode
-    expect(surface.resourceCount).toBe(5)
+    expect(surface.resourceCount).toBe(9)
     expect(surface.dispose()).toBe(true)
     expect(host.isConnected).toBe(false)
     launcher.click()

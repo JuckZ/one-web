@@ -7,6 +7,8 @@ on:
       - main
       - work
       - deploy
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -60,8 +62,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Release publisher regression tests
+        run: pnpm test:release
+
       - name: Install extension-capable Chromium
         run: pnpm exec playwright install --with-deps --no-shell chromium
+
+      - name: Verify standalone userscript
+        run: pnpm run verify:userscript
 
       - name: Verify Chromium target
         run: pnpm run verify:chromium
@@ -74,6 +82,9 @@ jobs:
           path: artifacts/test-results/chromium/
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Allow isolated default-port HTTP fixtures
+        run: sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0
 
       - name: Prepare isolated Firefox audio output
         run: |

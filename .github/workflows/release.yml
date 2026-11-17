@@ -1,0 +1,96 @@
+name: Release OneWeb
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing stable version tag, e.g. v0.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# GitHub Latest is repository-wide; all stable tags share this lock.
+concurrency:
+  group: oneweb-stable-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'JuckZ/one-web'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+      actions: read
+    env:
+      ONEWEB_RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Validate stable tag before checkout
+        run: |
+          python3 - <<'PYTAG'
+          import os, re
+          tag = os.environ['ONEWEB_RELEASE_TAG']
+          if not re.fullmatch(r'v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', tag):
+              raise SystemExit('Only stable version tags are accepted')
+          parts = tuple(map(int, tag[1:].split('.')))
+          if max(parts) > 65535 or parts == (0, 0, 0):
+              raise SystemExit('Invalid stable version')
+          PYTAG
+
+      - name: Checkout version tag
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate tag before building
+        run: |
+          node --input-type=module -e 'import p from "./package.json" with {type:"json"}; if (process.env.ONEWEB_RELEASE_TAG !== `v${p.version}` || !/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(process.env.ONEWEB_RELEASE_TAG)) process.exit(1)'
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "$ONEWEB_RELEASE_TAG^{commit}")"
+
+      - name: Require exact source CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/agent-factory/require_ci.py --repo "$GITHUB_REPOSITORY" --sha "$(git rev-parse HEAD)" --wait-seconds 900
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps --no-shell chromium
+
+      - name: Verify userscript lifecycle
+        run: pnpm verify:userscript
+
+      - name: Build and verify complete release candidate
+        run: pnpm release:prepare
+
+      - name: Publish verified draft as Latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/publish-release.py publish --tag "$ONEWEB_RELEASE_TAG" --sha "$(git rev-parse HEAD)" --directory "artifacts/release/$ONEWEB_RELEASE_TAG"
+
+      - name: Preserve candidate if publication fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-release-candidate
+          path: artifacts/release/
+          if-no-files-found: ignore
+          retention-days: 14

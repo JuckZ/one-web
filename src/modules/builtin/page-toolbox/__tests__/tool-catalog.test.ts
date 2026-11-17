@@ -6,7 +6,7 @@ import {
 } from '..'
 
 describe('page Toolbox packaged tool catalog', () => {
-  it('contains only the three reviewed default-off exact-origin descriptors', () => {
+  it('contains only reviewed default-off exact-origin descriptors', () => {
     expect(Object.keys(PAGE_TOOL_CATALOG)).toEqual([...PAGE_TOOL_IDS])
     for (const entry of Object.values(PAGE_TOOL_CATALOG)) {
       expect(entry.descriptor).toMatchObject({

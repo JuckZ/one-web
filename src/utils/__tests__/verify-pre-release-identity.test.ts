@@ -32,13 +32,17 @@ describe('oneWeb pre-release identity gate', () => {
     expect(() => validateOneWebIdentity({ ...packageManifest, name: 'oneweb' }, extensionManifest))
       .toThrow('Root package identity')
     expect(() => validateOneWebIdentity({ ...packageManifest, version: '0.0.1' }, extensionManifest))
-      .toThrow('canonical release candidate')
+      .toThrow('versions must agree')
     expect(() => validateOneWebIdentity({ ...packageManifest, homepage: 'https://example.test' }, extensionManifest))
       .toThrow('canonical OneWeb repository')
     expect(() => validateOneWebIdentity(packageManifest, {
       ...extensionManifest,
       browser_specific_settings: { gecko: { id: 'oneweb@juckz.local' } },
     })).toThrow('Firefox add-on identity')
+  })
+
+  it('supports a future coordinated stable version without changing product identity', () => {
+    expect(validateOneWebIdentity({ ...packageManifest, version: '1.2.3' }, { ...extensionManifest, version: '1.2.3' }).version).toBe('1.2.3')
   })
 
   it('rejects legacy runtime, remote-code and private-site markers', () => {

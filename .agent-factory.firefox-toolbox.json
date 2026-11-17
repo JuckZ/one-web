@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "lock_timeout_seconds": 1800,
+  "checks": [
+    {
+      "name": "firefox-seven-page-tools",
+      "argv": [
+        "pnpm",
+        "run",
+        "verify:firefox:toolbox"
+      ],
+      "timeout_seconds": 900
+    }
+  ]
+}

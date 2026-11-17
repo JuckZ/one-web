@@ -2,13 +2,13 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import { stableVersion } from './release-version'
 import { extensionRoot } from './utils'
 
 export const ONEWEB_ROOT_PACKAGE_NAME = 'one-web' as const
 export const ONEWEB_DISPLAY_NAME = 'OneWeb' as const
 export const ONEWEB_FIREFOX_ID = 'one-web@juckz.local' as const
 export const ONEWEB_HOMEPAGE = 'https://github.com/JuckZ/one-web' as const
-export const ONEWEB_RELEASE_VERSION = '0.1.0' as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -41,8 +41,9 @@ export function validateOneWebIdentity(packageManifest: unknown, extensionManife
 
   if (pkg.name !== ONEWEB_ROOT_PACKAGE_NAME || pkg.displayName !== ONEWEB_DISPLAY_NAME)
     throw new TypeError('Root package identity is not canonical OneWeb')
-  if (pkg.version !== ONEWEB_RELEASE_VERSION || manifest.version !== ONEWEB_RELEASE_VERSION)
-    throw new TypeError('Package and extension versions are not the canonical release candidate')
+  const version = stableVersion(pkg.version)
+  if (manifest.version !== version)
+    throw new TypeError('Package and extension versions must agree')
   if (pkg.homepage !== ONEWEB_HOMEPAGE)
     throw new TypeError('Root package homepage is not the canonical OneWeb repository')
   if (manifest.name !== ONEWEB_DISPLAY_NAME)
@@ -55,7 +56,7 @@ export function validateOneWebIdentity(packageManifest: unknown, extensionManife
     firefoxId: ONEWEB_FIREFOX_ID,
     homepage: ONEWEB_HOMEPAGE,
     packageName: ONEWEB_ROOT_PACKAGE_NAME,
-    version: ONEWEB_RELEASE_VERSION,
+    version,
   }
 }
 

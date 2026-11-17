@@ -137,7 +137,7 @@ describe('page Toolbox product control contract', () => {
 })
 
 describe('page Toolbox pure presentation and reducer', () => {
-  it('projects exactly three default-off finite controls before a site is ready', () => {
+  it('projects seven default-off finite controls before a site is ready', () => {
     let state = createPageToolboxControlState()
     let view = presentPageToolboxControlState(state)
     expect(view).toMatchObject({
@@ -150,6 +150,10 @@ describe('page Toolbox pure presentation and reducer', () => {
       ['password-visibility', false, false],
       ['free-page-edit', false, false],
       ['selection-copy-release', false, false],
+      ['element-spacing', false, false],
+      ['night-reading', false, false],
+      ['hidden-content', false, false],
+      ['selection-search', false, false],
     ])
 
     state = loadReady(snapshot({ access: 'site-unapproved', siteSettings: null }))

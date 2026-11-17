@@ -107,6 +107,7 @@ export class WorkspaceView {
   private readonly note = element('p', '', 'workspace-note')
   private unsubscribe: () => void
   private query = ''
+  private toolsRenderer?: (_outlet: HTMLElement, _state: WorkspaceSnapshot) => void
 
   constructor(readonly root: HTMLElement, private readonly _controller: WorkspaceController) {
     this.nav.setAttribute('aria-label', '工作区导航')
@@ -117,6 +118,8 @@ export class WorkspaceView {
   }
 
   async initialize() { await this._controller.initialize() }
+
+  setToolsRenderer(render: (_outlet: HTMLElement, _state: WorkspaceSnapshot) => void) { this.toolsRenderer = render }
 
   private action(button: HTMLButtonElement, operation: () => Promise<unknown>) {
     button.type = 'button'
@@ -144,10 +147,15 @@ export class WorkspaceView {
     })
     this.note.textContent = state.note
     this.note.hidden = !state.note
-    if (state.destination === 'tools')
-      this.renderTools(state)
-    else if (this.outlet.dataset.surface === 'tools')
+    if (state.destination === 'tools') {
+      if (this.toolsRenderer)
+        this.toolsRenderer(this.outlet, state)
+      else
+        this.renderTools(state)
+    }
+    else if (this.outlet.dataset.surface === 'tools') {
       this.outlet.replaceChildren()
+    }
     this.outlet.dataset.surface = state.destination
   }
 

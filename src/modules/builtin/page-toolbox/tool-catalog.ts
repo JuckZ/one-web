@@ -14,6 +14,10 @@ export const PAGE_TOOL_IDS = [
   'password-visibility',
   'free-page-edit',
   'selection-copy-release',
+  'element-spacing',
+  'night-reading',
+  'hidden-content',
+  'selection-search',
 ] as const
 
 export type PageToolId = typeof PAGE_TOOL_IDS[number]
@@ -32,10 +36,18 @@ export interface SelectionCopyReleaseSettingsV1 {
   readonly contextMenu: boolean
 }
 
+export interface NightReadingSettingsV1 {
+  readonly strength: 'gentle' | 'medium' | 'strong'
+}
+
 const defaultSettings: Readonly<Record<PageToolId, PageToolJsonValue>> = Object.freeze({
   'password-visibility': Object.freeze({ gesture: 'double-click' }),
   'free-page-edit': Object.freeze({ mode: 'rich-text' }),
   'selection-copy-release': Object.freeze({ selection: true, copy: true, contextMenu: true }),
+  'element-spacing': Object.freeze({}),
+  'night-reading': Object.freeze({ strength: 'gentle' }),
+  'hidden-content': Object.freeze({}),
+  'selection-search': Object.freeze({}),
 })
 
 function exactObject(value: PageToolJsonValue, keys: readonly string[]) {
@@ -62,6 +74,33 @@ function releaseSettings(value: PageToolJsonValue): boolean {
     && typeof record.selection === 'boolean'
     && typeof record.copy === 'boolean'
     && typeof record.contextMenu === 'boolean')
+}
+
+function emptySettings(value: PageToolJsonValue): boolean {
+  return Boolean(exactObject(value, []))
+}
+
+function nightSettings(value: PageToolJsonValue): boolean {
+  const record = exactObject(value, ['strength'])
+  return record?.strength === 'gentle' || record?.strength === 'medium' || record?.strength === 'strong'
+}
+
+function additionalDescriptor(id: PageToolId, title: string, description: string, domAccess: PageToolDescriptorV1['domAccess']): PageToolDescriptorV1 {
+  return {
+    schemaVersion: PAGE_TOOL_DESCRIPTOR_SCHEMA_VERSION,
+    id,
+    title,
+    description,
+    siteScope: 'user-approved-exact-http-origin',
+    requiredSiteGrant: 'exact-origin',
+    runAt: 'document-idle',
+    frames: 'top',
+    defaultEnabled: false,
+    domAccess,
+    requiresMainWorld: false,
+    settingsSchemaId: `page-toolbox.${id}`,
+    settingsSchemaVersion: PAGE_TOOL_SETTINGS_SCHEMA_VERSION,
+  }
 }
 
 const descriptors: readonly PageToolDescriptorV1[] = [
@@ -110,6 +149,10 @@ const descriptors: readonly PageToolDescriptorV1[] = [
     settingsSchemaId: 'page-toolbox.selection-copy-release',
     settingsSchemaVersion: PAGE_TOOL_SETTINGS_SCHEMA_VERSION,
   },
+  additionalDescriptor('element-spacing', 'Element spacing', 'Measure two explicitly chosen loaded elements using a local overlay', ['read', 'listeners', 'observers', 'owned-nodes']),
+  additionalDescriptor('night-reading', 'Reading dimmer', 'Apply a reversible non-intercepting dimmer without changing the site theme', ['observers', 'owned-nodes']),
+  additionalDescriptor('hidden-content', 'Loaded hidden content', 'Temporarily reveal a bounded set of existing visual elements', ['read', 'attributes', 'observers']),
+  additionalDescriptor('selection-search', 'Selection search', 'Prepare bounded selected text for explicit npm or GitHub link activation', ['read', 'listeners', 'observers', 'owned-nodes']),
 ]
 
 const schemas: readonly PageToolSettingsSchemaDefinitionV1[] = [
@@ -130,6 +173,18 @@ const schemas: readonly PageToolSettingsSchemaDefinitionV1[] = [
     schemaId: 'page-toolbox.selection-copy-release',
     schemaVersion: PAGE_TOOL_SETTINGS_SCHEMA_VERSION,
     validate: releaseSettings,
+  },
+  ...(['element-spacing', 'hidden-content', 'selection-search'] as const).map(toolId => ({
+    toolId,
+    schemaId: `page-toolbox.${toolId}`,
+    schemaVersion: PAGE_TOOL_SETTINGS_SCHEMA_VERSION,
+    validate: emptySettings,
+  })),
+  {
+    toolId: 'night-reading',
+    schemaId: 'page-toolbox.night-reading',
+    schemaVersion: PAGE_TOOL_SETTINGS_SCHEMA_VERSION,
+    validate: nightSettings,
   },
 ]
 

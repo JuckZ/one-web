@@ -38,15 +38,21 @@ function writeManifest() {
   execSync('pnpm exec esno ./scripts/manifest.ts', { stdio: 'inherit' })
 }
 
+async function copySandboxPage() {
+  await fs.copy(r('src/apps/sandbox.html'), e('dist/apps/sandbox.html'))
+}
+
 if (extensionRoot !== r('extension'))
   await fs.copy(r('extension/assets'), e('assets'))
 writeManifest()
+await copySandboxPage()
 
 if (isDev) {
   stubIndexHtml()
   chokidar.watch(r('src/**/*.html'))
     .on('change', () => {
       stubIndexHtml()
+      void copySandboxPage()
     })
   chokidar.watch([r('src/manifest.ts'), r('package.json')])
     .on('change', () => {

@@ -9,6 +9,7 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import fs from 'fs-extra'
 import { runFirefoxAssistantScenario } from './firefox-assistant-scenario'
+import { type FirefoxSmartAppsDriver, runFirefoxSmartAppsScenario } from './firefox-smart-apps-scenario'
 import { prepareFirefoxTestAudio } from './firefox-test-audio'
 
 const EXTENSION_ID = 'one-web@juckz.local'
@@ -773,7 +774,7 @@ async function activateAndApprove(client: MarionetteClient, driverHandle: string
   return asRecord(result.value, 'Firefox Page Toolbox approval value')
 }
 
-async function activateAndRunSidebarSave(client: MarionetteClient, driverHandle: string, origin: string) {
+async function activateAndRunSidebarSave(client: MarionetteClient, driverHandle: string, origin: string, toolIds = ['free-page-edit', 'selection-copy-release'], enabled = true) {
   await showBuiltinTool(client, driverHandle, PAGE_TOOLBOX_ID, '[data-testid=page-toolbox-control]')
   const result = asRecord(await executeAsync(client, [
     'const input=arguments[0],done=arguments[arguments.length-1];',
@@ -792,22 +793,22 @@ async function activateAndRunSidebarSave(client: MarionetteClient, driverHandle:
     '}',
     'const control=document.querySelector("[data-testid=page-toolbox-control]");',
     'if(control?.dataset.state!=="ready")throw new Error(`sidebar not ready: ${control?.dataset.state}`);',
-    'for(const toolId of ["free-page-edit","selection-copy-release"]){',
+    'for(const toolId of input.toolIds){',
     'const checkbox=document.querySelector(`[data-tool-id="${toolId}"] input[data-page-toolbox-enabled]`);',
     'if(!(checkbox instanceof HTMLInputElement))throw new Error(`checkbox missing: ${toolId}`);',
-    'checkbox.checked=true;',
+    'checkbox.checked=input.enabled;',
     'checkbox.dispatchEvent(new Event("change",{bubbles:true}));',
     '}',
     'document.querySelector("[data-testid=page-toolbox-save]").click();',
     'for(let attempt=0;attempt<100;attempt++){',
     'const stored=await browser.storage.local.get("oneweb.module-state.v1:dev.oneweb.page-toolbox");',
     'const enabled=stored["oneweb.module-state.v1:dev.oneweb.page-toolbox"]?.settings?.sites?.[input.origin]?.enabledToolIds||[];',
-    'if(enabled.includes("free-page-edit")&&enabled.includes("selection-copy-release"))return enabled;',
+    'if(input.toolIds.every(id=>enabled.includes(id)===input.enabled))return enabled;',
     'await delay(50);',
     '}',
     'throw new Error("trusted sidebar save did not settle");',
     '})().then(value=>done({ok:true,value}),error=>done({ok:false,error:String(error)}));',
-  ].join(''), [{ origin }]), 'Firefox trusted sidebar save')
+  ].join(''), [{ origin, toolIds, enabled }]), 'Firefox trusted sidebar save')
   assert(result.ok === true, `Firefox trusted sidebar save failed: ${String(result.error)}`)
   return result.value
 }
@@ -965,11 +966,57 @@ async function runFirefoxScenario(
   ].join(''), [alphaOrigin]), 'Firefox sidebar reflection')
   assert(reflected.ok === true, `Firefox sidebar did not reflect Shadow update: ${String(reflected.error)}`)
 
+  await switchWindow(client, alphaHandle)
+  await execute(client, [
+    'const fixture=document.createElement("section");fixture.id="seven-tools-fixture";',
+    'fixture.innerHTML="<button id=\\"measure-a\\" style=\\"position:absolute;left:420px;top:160px;width:100px;height:80px\\">A</button><button id=\\"measure-b\\" style=\\"position:absolute;left:620px;top:320px;width:120px;height:60px\\">B</button><p id=\\"loaded-hidden\\" hidden>Loaded visual content</p><form><span id=\\"excluded-hidden\\" hidden>Form-only text</span></form><p id=\\"search-text\\">Firefox explicit query</p>";',
+    'document.body.append(fixture);return true;',
+  ].join(''))
+  await activateAndRunSidebarSave(client, driverHandle, alphaOrigin, ['element-spacing', 'night-reading', 'hidden-content', 'selection-search'])
+  // Free edit makes the body an editor; hidden-content must honor that exclusion first.
+  await switchWindow(client, alphaHandle)
+  assert(await execute(client, 'return document.querySelector("#loaded-hidden").hidden') === true, 'Hidden-content entered an active editor')
+  await activateAndRunSidebarSave(client, driverHandle, alphaOrigin, ['free-page-edit', 'hidden-content'], false)
+  await activateAndRunSidebarSave(client, driverHandle, alphaOrigin, ['hidden-content'])
+  await switchWindow(client, alphaHandle)
+  await pollUntil(() => execute(client, [
+    'const dimmer=document.querySelector("[data-oneweb-page-toolbox-widget=night-reading]");',
+    'return document.querySelector("#loaded-hidden").hidden===false&&document.querySelector("#excluded-hidden").hidden===true',
+    '&&dimmer?.style.pointerEvents==="none"&&dimmer?.style.backgroundColor==="rgba(8, 12, 20, 0.12)"',
+    '&&document.querySelectorAll("[data-oneweb-page-toolbox-widget]").length===3;',
+  ].join('')), COMMAND_TIMEOUT_MS, 'Firefox four rewritten tools')
+  for (const selector of ['#measure-a', '#measure-b']) {
+    await execute(client, 'document.querySelector(arguments[0]).focus();return true', [selector])
+    await client.command('WebDriver:PerformActions', { actions: [{ id: 'measure-keys', type: 'key', actions: [
+      { type: 'keyDown', value: '\uE00A' },
+      { type: 'keyDown', value: '\uE008' },
+      { type: 'keyDown', value: 'm' },
+      { type: 'keyUp', value: 'm' },
+      { type: 'keyUp', value: '\uE008' },
+      { type: 'keyUp', value: '\uE00A' },
+    ] }] })
+    await client.command('WebDriver:ReleaseActions')
+  }
+  await execute(client, [
+    'const range=document.createRange();range.selectNodeContents(document.querySelector("#search-text"));',
+    'const selection=document.getSelection();selection.removeAllRanges();selection.addRange(range);',
+    'return true;',
+  ].join(''))
+  await activateAndRunSidebarSave(client, driverHandle, alphaOrigin, ['free-page-edit'])
+  await switchWindow(client, alphaHandle)
+  const screenshot = unwrapValue(await client.command('WebDriver:TakeScreenshot', { full: false }))
+  assert(typeof screenshot === 'string', 'Firefox seven-tool screenshot was unavailable')
+  const evidenceDirectory = path.resolve(process.env.ONEWEB_TEST_OUTPUT_DIR || 'artifacts/test-results/firefox-toolbox')
+  await fs.ensureDir(evidenceDirectory)
+  await fs.writeFile(path.join(evidenceDirectory, 'seven-tools.png'), Buffer.from(screenshot, 'base64'))
+
   await toggleBuiltin(client, driverHandle, false)
   await switchWindow(client, alphaHandle)
   await pollUntil(() => execute(client, 'return document.querySelectorAll("[data-oneweb-page-toolbox-control]").length'), COMMAND_TIMEOUT_MS, 'Firefox disable cleanup', value => value === 0)
   const disabledState = asRecord(await execute(client, 'return {body:document.body.getAttribute("contenteditable"),password:document.querySelector("#toolbox-password").getAttribute("type"),selection:[...document.querySelectorAll("style")].some(style=>style.textContent.includes("user-select:text"))}'), 'Firefox disabled state')
   assert(disabledState.body === 'false' && disabledState.password === 'password' && disabledState.selection === false, 'Firefox disable did not clean Page Toolbox resources')
+  const additionalDisabled = asRecord(await execute(client, 'return {widgets:document.querySelectorAll("[data-oneweb-page-toolbox-widget]").length,hidden:document.querySelector("#loaded-hidden").hidden,excluded:document.querySelector("#excluded-hidden").hidden}'), 'Firefox additional-tool cleanup')
+  assert(additionalDisabled.widgets === 0 && additionalDisabled.hidden === true && additionalDisabled.excluded === true, 'Firefox additional tools did not restore owned DOM')
 
   await toggleBuiltin(client, driverHandle, true)
   await switchWindow(client, alphaHandle)
@@ -1004,6 +1051,11 @@ async function runFirefoxScenario(
     return { permissions: clone.permissions, storage, unrelatedRecords }
   }
   assert(JSON.stringify(normalize(finalState)) === JSON.stringify(normalize(baseline)), 'Firefox Page Toolbox changed unrelated permissions, Registry records or module state')
+
+  if (process.env.FIREFOX_SCENARIO === 'toolbox') {
+    process.stdout.write('Firefox seven-tool lifecycle, trusted sidebar, keyboard, two-origin isolation and cleanup: passed\n')
+    return
+  }
 
   await switchWindow(client, driverHandle)
   const sendProtectedBefore = await executeAsync(client, [
@@ -1064,7 +1116,7 @@ async function runFirefoxScenario(
   assert(sendRequests.me === 1 && sendRequests.tools === 1 && sendRequests.add === 1 && sendRequests.undone === 1 && sendRequests.unauthorized === 0, `Firefox fixed connector requests are invalid: ${JSON.stringify(sendRequests)}`)
   await runVideoDubbingFirefoxScenario(client, driverHandle, alphaOrigin, dubbingRequests)
   await runCookieManagerFirefoxScenario(client, driverHandle)
-  await runFirefoxAssistantScenario({
+  const assistantDriver: FirefoxSmartAppsDriver = {
     execute: (script, args) => execute(client, script, args),
     executeAsync: (script, args) => executeAsync(client, script, args),
     switchWindow: handle => switchWindow(client, handle),
@@ -1082,7 +1134,10 @@ async function runFirefoxScenario(
     grant: pattern => grantExactOrigin(client, pattern),
     revoke: pattern => removeExactOrigin(client, pattern),
     click: selector => clickElement(client, selector),
-  }, driverHandle, alphaOrigin, assistantRequests)
+    switchFrame: async (id) => { await client.command('WebDriver:SwitchToFrame', { id }) },
+  }
+  await runFirefoxAssistantScenario(assistantDriver, driverHandle, alphaOrigin, assistantRequests)
+  await runFirefoxSmartAppsScenario(assistantDriver, driverHandle, alphaOrigin)
   await runNetworkManagementFirefoxScenario(client, driverHandle, alphaOrigin, clashRequests)
   process.stdout.write('Firefox packaged-builtin gates: 5/5 passed (Page Toolbox + Send to OpenList + Video Dubbing real media + Cookie Manager CRUD/partition/JSON/revocation/isolation + Network Management WebRTC/Clash)\n')
 }

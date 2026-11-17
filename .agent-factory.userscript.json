@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "lock_timeout_seconds": 1800,
+  "checks": [
+    {
+      "name": "standalone-userscript",
+      "argv": [
+        "pnpm",
+        "run",
+        "verify:userscript"
+      ],
+      "timeout_seconds": 600
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # OneWeb privacy and data inventory
 
-> Updated: 2026-11-14. This file is the engineering source of truth for extension manifests,
+> Updated: 2026-11-17. This file is the engineering source of truth for extension manifests,
 > Firefox data-collection permissions, store disclosures and the public privacy policy. Any new
 > context, remote capability, controller or telemetry sink must update this inventory in the same
 > change.
@@ -37,6 +37,7 @@ OneWeb declares these required data types:
 | `browsingActivity`       | Exact current URL/domain, GitHub `owner/repo`, page type, navigation identity and selected video BV/AV/CID                                               | Only for an enabled module with reviewed context grants, an explicit Send to OpenList action, or explicit platform subtitle discovery | Exact installed remote-module origin, selected OpenList endpoint or validated platform metadata/subtitle endpoint; provide the requested page/video behavior |
 | `websiteContent`         | Page title/description/image, selected text, link/media URL, user-selected video subtitles                                                               | Only after the matching context grant or explicit capture/submit action                                                               | Exact installed module/controller or selected translation/TTS service origin; perform the user-requested feature                                             |
 | `personalCommunications` | User-entered assistant messages and explicitly selected or imported communication text                                                                   | Only when the user sends a chat, writing, reading, selection or translation request                                                   | Exact user-configured model service; produce the requested answer or translation                                                                             |
+| `searchTerms`            | Up to 200 characters of explicitly selected non-input page text                                                                                          | Only after the user clicks a fixed npm or GitHub search link                                                                          | The chosen npm/GitHub search page; no referrer, automatic search or persistent query history                                                                 |
 
 The assistant also uses `authenticationInfo` for its provider key and `websiteContent` for
 explicitly attached page text, selections and imported subtitles. Saved source URLs have query
@@ -48,7 +49,7 @@ OneWeb does **not** declare:
 - `technicalAndInteraction`: there is no product telemetry, analytics or remote crash reporting.
 - `bookmarksInfo`: Bookmark Doctor reads and edits bookmarks only inside the packaged extension;
   remote modules cannot request its privileged bookmark capabilities.
-- `searchTerms`, location, health, financial or identifying information: OneWeb does not implement
+- Location, health, financial or identifying information: OneWeb does not implement
   dedicated collection of those categories. Assistant text is user-directed free text; users can
   choose to include sensitive information in a request to their provider.
 
@@ -60,20 +61,64 @@ Firefox UI, shortcut, consent or editing behavior.
 
 ## Data-flow inventory
 
-| Flow                         | Source                                                                          | Local storage                                                                                                                                | External transfer                                                                                  | Retention/control                                                                                                           |
-| ---------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| RepoLens context             | GitHub content script                                                           | Per-tab runtime context; module grants                                                                                                       | `repo`, URL and page type to the exact RepoLens origin                                             | Remote policy governs server retention; disabling/removing the module stops transfer                                        |
-| User-installed remote module | Context broker                                                                  | Manifest, grants and module-owned state                                                                                                      | Only approved context fields to the exact manifest origin                                          | User can disable/uninstall module and revoke its origin permission                                                          |
-| Send to OpenList             | Explicit page/link/media action                                                 | Exact-origin profile and token in extension storage                                                                                          | Candidate URL/content and token to the chosen endpoint                                             | User can disconnect/delete profile and revoke origin permission; service retention is user-controlled                       |
-| Clash Control                | Explicit configured controller                                                  | Exact-origin profile and secret in extension storage                                                                                         | Authentication and requested controller commands                                                   | User can disconnect profile and revoke exact-origin permission                                                              |
-| Browser Journal              | Active tab after explicit start                                                 | Local bounded session/archive                                                                                                                | None                                                                                               | User stops session and deletes local archive                                                                                |
-| Bookmark Doctor              | Browser bookmarks                                                               | Local scan/repair state                                                                                                                      | None                                                                                               | User-triggered only; browser/extension storage controls deletion                                                            |
-| Page Toolbox                 | Current page after explicit action                                              | Local module state                                                                                                                           | None by default                                                                                    | Exact-origin permission, preview and explicit action gates                                                                  |
-| Video Dubbing                | Explicitly selected video subtitles or imported SRT/VTT                         | Module-specific local service configuration and keys; transient subtitle/audio cache                                                         | Bounded subtitle text and authentication to selected translation/TTS services after explicit start | Stop, disable or revoke to end sessions; delete configuration to remove keys; provider controls remote retention            |
-| Assistant                    | User messages and explicitly captured page/selection or imported text/subtitles | Local messages, attachment snapshots, favorites and prompts by default; provider key in session storage unless explicitly remembered locally | Bounded messages/reference text and authentication to the exact configured model origin            | Disable future history, delete a conversation or explicitly clear all history/favorites; provider controls remote retention |
-| Workspace and page assistant | Navigation, chosen tool, enabled sites and explicit selection actions           | Local destination, tool favorites/recents and site/global preferences; visit hiding and handoff tokens in memory                             | No transfer solely for navigation or displaying the toolbar                                        | Tool navigation leaves business data intact; hidden sites/global switch can be restored in settings                         |
+| Flow                         | Source                                                                          | Local storage                                                                                                                                                   | External transfer                                                                                    | Retention/control                                                                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RepoLens builtin             | GitHub repository context or explicit public repository input                   | `oneweb.repolens.v1`: 12 cached analyses (6h freshness), up to 50 repositories × 90 analysis-date Star snapshots; Token in session unless explicitly remembered | Fixed public-repository GET requests to `https://api.github.com`, optional user PAT                  | Explicit analysis and origin permission; stop/disable/revoke cancels; clear deletes caches/snapshots; blank Token save removes credential               |
+| Smart page tools             | User template plus explicitly captured page or selection                        | `oneweb.smart-apps.v1` holds app definitions; results/source use existing Assistant history preference                                                          | Rendered text and explicitly attached source to existing configured model provider                   | No automatic capture; explicit run, existing exact-origin permissions; app disable/delete closes local run; Assistant history deletion remains separate |
+| HTML mini apps               | User-authored/imported or explicitly AI-generated HTML                          | Same bounded app library; interaction state only in sandbox memory                                                                                              | AI generation sends the entered app idea to configured model; running HTML has no network capability | Explicit preview/save/run; closing/disabling removes iframe; imports disabled until reviewed; export includes app definitions only                      |
+| User-installed remote module | Context broker                                                                  | Manifest, grants and module-owned state                                                                                                                         | Only approved context fields to the exact manifest origin                                            | User can disable/uninstall module and revoke its origin permission                                                                                      |
+| Send to OpenList             | Explicit page/link/media action                                                 | Exact-origin profile and token in extension storage                                                                                                             | Candidate URL/content and token to the chosen endpoint                                               | User can disconnect/delete profile and revoke origin permission; service retention is user-controlled                                                   |
+| Clash Control                | Explicit configured controller                                                  | Exact-origin profile and secret in extension storage                                                                                                            | Authentication and requested controller commands                                                     | User can disconnect profile and revoke exact-origin permission                                                                                          |
+| Browser Journal              | Active tab after explicit start                                                 | Local bounded session/archive                                                                                                                                   | None                                                                                                 | User stops session and deletes local archive                                                                                                            |
+| Bookmark Doctor              | Browser bookmarks                                                               | Local scan/repair state                                                                                                                                         | None                                                                                                 | User-triggered only; browser/extension storage controls deletion                                                                                        |
+| Page Toolbox                 | Current page after explicit action                                              | Local module state                                                                                                                                              | Only fixed npm/GitHub search links after a user click; no referrer                                   | Exact-origin permission, preview and explicit action gates                                                                                              |
+| Video Dubbing                | Explicitly selected video subtitles or imported SRT/VTT                         | Module-specific local service configuration and keys; transient subtitle/audio cache                                                                            | Bounded subtitle text and authentication to selected translation/TTS services after explicit start   | Stop, disable or revoke to end sessions; delete configuration to remove keys; provider controls remote retention                                        |
+| Assistant                    | User messages and explicitly captured page/selection or imported text/subtitles | Local messages, attachment snapshots, favorites and prompts by default; provider key in session storage unless explicitly remembered locally                    | Bounded messages/reference text and authentication to the exact configured model origin              | Disable future history, delete a conversation or explicitly clear all history/favorites; provider controls remote retention                             |
+| Workspace and page assistant | Navigation, chosen tool, enabled sites and explicit selection actions           | Local destination, tool favorites/recents and site/global preferences; visit hiding and handoff tokens in memory                                                | No transfer solely for navigation or displaying the toolbar                                          | Tool navigation leaves business data intact; hidden sites/global switch can be restored in settings                                                     |
 
 ## Assistant and explicit page context
+
+## Smart applications and RepoLens migration
+
+### Opt-in real LLM acceptance tooling
+
+`ONEWEB_LIVE_LLM=1 pnpm test:live-llm` is developer tooling excluded from ordinary tests and the
+extension package. It reads effective Codex provider configuration locally. A temporary loopback
+relay retains the actual Magpie key in Node memory and forwards only the configured model's text
+chat to the fixed endpoint, without browser cookies or redirects. The disposable browser receives
+a synthetic alias. Only synthetic randomized page/selection facts and a counter request leave the
+machine. Real model responses stream without fixture substitution. No user page/profile is read.
+The relay has payload limits, timeout, abort cleanup and status-only upstream errors.
+
+Trace/screenshots/video are disabled. The JSON report records outcomes and model/status/timing/byte
+metadata, never actual tokens or upstream headers; prompt/response bodies are not metadata.
+Assertion failures can include synthetic facts or generated code. The isolated profile is deleted
+at teardown and the relay closes its sockets. Gateway/provider retention remains service-defined.
+No production telemetry, permission or model protocol setting is added.
+
+The current RepoLens seed is a packaged builtin, not a remote service integration. No legacy
+`.env`, server credentials or data are automatically imported. Public GitHub data is filtered to
+exclude private repositories before caching/reporting. The background sends a PAT only to fixed
+GitHub API GET routes, omits cookies and referrers, rejects redirects, limits response sizes and
+uses request/overall timeouts. Its public configuration exposes only key presence. GitHub origin
+permission is optional and requested from an explicit Analyze action. The former localhost host
+grant is absent from production; the remote SDK fixture grants its own test origin in isolation.
+
+Smart-app definitions are restricted to 50 entries/2 MiB, mini-app HTML to 256 KiB and prompt
+templates to 16 KiB. CRUD/import/export protocols accept only trusted packaged management pages.
+Templates have a finite variable set and outputs are text. Imported apps receive fresh IDs and
+are disabled. Export does not include service keys, history or RepoLens caches.
+
+Mini-app source executes only in the packaged manifest sandbox and a nested opaque iframe.
+The render-only handshake accepts the expected window plus nonce and bounded payload; there is
+no storage/network/capability RPC. CSP rejects external scripts/resources, network endpoints,
+child frames, workers, object, form submission and base changes. Sandbox attributes omit
+same-origin, popup, top navigation, downloads and browser privileges. The early bootstrap disables
+WebRTC peer networking. HTML may still consume CPU/memory; no process resource guarantee is made.
+App interaction state is not persisted. Removing an app does not remove model-generated content
+already saved under the user's existing Assistant history preference.
+
+## Assistant data retention
 
 The assistant accepts a user-configured HTTPS or loopback HTTP chat-completions service. Its
 background controller alone attaches the provider credential to the fixed `chat/completions`
@@ -275,3 +320,31 @@ For each release, record without secrets:
 - network origins present in the final package;
 - tests proving permission revocation and module isolation;
 - reviewer and date for this inventory.
+
+## Userscript and expanded page tools
+
+The standalone `OneWeb` userscript executes only in top-level HTTP(S) documents and uses the
+manager's DOM sandbox with finite GM storage/menu/change-listener grants. Installation matches all
+HTTP(S) sites; OneWeb's per-origin opt-in is an application setting, not an extension host permission.
+GM keys `oneweb.userscript.v1:<exact-origin>:approved` and `:tool:<fixed-id>` contain booleans only.
+No extension state, old OneMonkey state, page localStorage, password values, cookies or telemetry
+is imported. The manager owns retention; OneWeb's Forget command deletes this origin's keys and
+drains its DOM immediately. Manager-level removal/disable may require refreshing open documents.
+
+The shared geometry inspector reads two user-selected elements' rectangles only. Hidden-content
+reveal scans at most 1500 existing visual DOM nodes and changes at most80; form/credential/editor
+containers, executable nodes and frames are excluded. The reading dimmer owns a pointer-transparent
+overlay. Selection search retains at most200 characters in memory, excludes input/textarea selections
+and sends only an explicitly clicked fixed npm/GitHub query in a new tab with no referrer. Disabling
+the tool clears links and text. These flows do not invoke a model, request remote code or expose a
+generic selector/action API. Extension storage/settings and GM settings are independent.
+
+## Userscript distribution updates
+
+The standalone OneWeb runtime makes no update requests. Its script manager reads the canonical
+`https://github.com/JuckZ/one-web/releases/latest/download/one-web.meta.js` and, on a newer version,
+downloads `one-web.user.js` from the same release channel, following GitHub's asset redirects.
+This is manager-owned installation/update traffic, with ordinary IP/client network metadata and
+manager-configured timing; it does not include page content, selections, GM settings or provider keys.
+Users control automatic updates and script removal in their manager. No OneWeb telemetry or LLM call
+is added. Runtime selection-search disclosure above remains separate from software distribution.

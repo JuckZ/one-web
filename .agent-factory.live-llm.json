@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "lock_timeout_seconds": 1800,
+  "checks": [
+    { "name": "real-magpie-production-extension", "argv": ["pnpm", "run", "test:live-llm"], "timeout_seconds": 600 }
+  ]
+}

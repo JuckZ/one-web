@@ -3,6 +3,7 @@ import type PkgType from '../package.json'
 import fs from 'fs-extra'
 import { resolveRepoLensOrigin } from '../scripts/repolens-origin'
 import { isDev, isFirefox, port, r } from '../scripts/utils'
+import { MINI_APP_SANDBOX_CSP } from './apps/sandbox-policy'
 
 interface ManifestBuildOptions {
   development?: boolean
@@ -12,7 +13,7 @@ interface ManifestBuildOptions {
 
 interface FirefoxDataCollectionSettings extends Manifest.FirefoxSpecificProperties {
   data_collection_permissions: {
-    required: Array<'authenticationInfo' | 'browsingActivity' | 'websiteContent' | 'personalCommunications'>
+    required: Array<'authenticationInfo' | 'browsingActivity' | 'websiteContent' | 'personalCommunications' | 'searchTerms'>
   }
 }
 
@@ -32,7 +33,7 @@ export async function getManifest(options: ManifestBuildOptions = {}) {
     id: 'one-web@juckz.local',
     strict_min_version: '142.0',
     data_collection_permissions: {
-      required: ['authenticationInfo', 'browsingActivity', 'websiteContent', 'personalCommunications'],
+      required: ['authenticationInfo', 'browsingActivity', 'websiteContent', 'personalCommunications', 'searchTerms'],
     },
   }
 
@@ -82,7 +83,6 @@ export async function getManifest(options: ManifestBuildOptions = {}) {
     },
     host_permissions: [
       'https://github.com/*',
-      `${repolensOrigin}/*`,
     ],
     optional_host_permissions: [
       'https://*/*',
@@ -109,9 +109,13 @@ export async function getManifest(options: ManifestBuildOptions = {}) {
     content_security_policy: {
       extension_pages: development
         // this is required on dev for Vite script to load
-        ? `script-src 'self' http://localhost:${port}; object-src 'self'; frame-src ${repolensOrigin} https: http://localhost:* http://127.0.0.1:*; connect-src https: http:`
-        : `script-src 'self'; object-src 'self'; frame-src ${repolensOrigin} https: http://localhost:* http://127.0.0.1:*; connect-src https: http:`,
+        ? `script-src 'self' http://localhost:${port}; object-src 'self'; frame-src 'self' ${repolensOrigin} https: http://localhost:* http://127.0.0.1:*; connect-src https: http:`
+        : `script-src 'self'; object-src 'self'; frame-src 'self' https: http://localhost:* http://127.0.0.1:*; connect-src https: http:`,
+      // Firefox uses its declared sandbox default; the nested document enforces the closed
+      // app CSP. A custom unsafe-inline sandbox policy triggers Mozilla's remote-code gate.
+      ...(firefox ? {} : { sandbox: MINI_APP_SANDBOX_CSP }),
     },
+    sandbox: { pages: ['dist/apps/sandbox.html'] },
     browser_specific_settings: {
       gecko: firefoxSettings,
     },

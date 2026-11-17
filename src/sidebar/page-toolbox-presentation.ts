@@ -110,7 +110,7 @@ export interface PageToolboxChoiceOptionPresentation {
 export type PageToolboxSettingPresentation =
   | {
     readonly kind: 'choice'
-    readonly key: 'gesture' | 'mode'
+    readonly key: 'gesture' | 'mode' | 'strength'
     readonly label: string
     readonly value: string
     readonly options: readonly PageToolboxChoiceOptionPresentation[]
@@ -181,6 +181,10 @@ const productTools: readonly ProductToolDefinition[] = Object.freeze([
     safetyLabel: '仅处理选择、复制和右键菜单三类固定阻断',
     defaultSettings: getDefaultPageToolSettings('selection-copy-release'),
   }),
+  Object.freeze({ toolId: 'element-spacing', title: '元素间距', safetyLabel: 'Alt + 单击两元素，或聚焦后按 Alt + Shift + M；Escape 清除，不修改网页元素', defaultSettings: getDefaultPageToolSettings('element-spacing') }),
+  Object.freeze({ toolId: 'night-reading', title: '阅读遮光', safetyLabel: '增加可撤销的页面遮光层，不改变站点主题；鼠标和键盘仍可使用', defaultSettings: getDefaultPageToolSettings('night-reading') }),
+  Object.freeze({ toolId: 'hidden-content', title: '显示已加载隐藏内容', safetyLabel: '扫描前 1500 个节点，最多恢复 80 个现有元素；不读取注释、子框架或绕过访问权限', defaultSettings: getDefaultPageToolSettings('hidden-content') }),
+  Object.freeze({ toolId: 'selection-search', title: '选文搜索', safetyLabel: '最多 200 字；明确点击 npm / GitHub 链接才向对应网站搜索，不保存选文', defaultSettings: getDefaultPageToolSettings('selection-search') }),
 ])
 
 const requestIdPattern = /^\w[\w.:-]*$/
@@ -488,6 +492,21 @@ function presentSettings(toolId: PageToolId, settings: PageToolJsonValue): reado
       ]),
     })])
   }
+  if (toolId === 'night-reading') {
+    return Object.freeze([Object.freeze({
+      kind: 'choice',
+      key: 'strength',
+      label: '遮光强度',
+      value: record.strength as string,
+      options: Object.freeze([
+        Object.freeze({ value: 'gentle', label: '轻度（12%）' }),
+        Object.freeze({ value: 'medium', label: '中度（24%）' }),
+        Object.freeze({ value: 'strong', label: '较强（36%）' }),
+      ]),
+    })])
+  }
+  if (toolId !== 'selection-copy-release')
+    return Object.freeze([])
   return Object.freeze([
     Object.freeze({ kind: 'boolean', key: 'selection', label: '允许选择文本', value: record.selection as boolean }),
     Object.freeze({ kind: 'boolean', key: 'copy', label: '允许复制', value: record.copy as boolean }),

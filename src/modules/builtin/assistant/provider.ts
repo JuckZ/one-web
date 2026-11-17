@@ -20,8 +20,10 @@ export async function completeChat(
     signal,
     body,
   })
-  if (!response.ok)
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {})
     throw new Error(`模型服务返回 HTTP ${response.status}`)
+  }
   if (!response.body)
     throw new Error('模型返回空响应')
   const sse = response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')

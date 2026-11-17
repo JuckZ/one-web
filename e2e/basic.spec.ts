@@ -2,10 +2,78 @@ import type { BrowserContext, FrameLocator, Page } from '@playwright/test'
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
-import { expect, extensionPath, repolensFixtureOrigin, test } from './fixtures'
+import { expect, extensionPath, repolensFixtureOrigin, repolensReferenceId, repolensReferenceManifestUrl, test } from './fixtures'
 
 const browserLabel = process.env.PW_BROWSER_CHANNEL === 'msedge' ? 'edge' : (process.env.PW_BROWSER_CHANNEL === 'chrome' ? 'chrome' : 'chromium')
 const reportScreenshot = path.resolve(process.cwd(), process.env.ONEWEB_TEST_OUTPUT_DIR || 'test-results', `oneweb-${browserLabel}-side-panel.png`)
+
+test('Page Toolbox shares the four rewritten tools through the production extension host', async ({ context, extensionId, moduleFixtures }) => {
+  const origin = new URL(moduleFixtures.primary.manifestUrl).origin
+  const peerOrigin = new URL(moduleFixtures.secondary.manifestUrl).origin
+  const site = await context.newPage()
+  await site.setViewportSize({ width: 1000, height: 800 })
+  await site.goto(`${origin}/journal-page-toolbox-poc`)
+  await site.evaluate(() => {
+    document.body.innerHTML = '<button id="measure-a" style="position:absolute;left:420px;top:160px;width:100px;height:80px">A</button><button id="measure-b" style="position:absolute;left:620px;top:320px;width:120px;height:60px">B</button><p id="loaded-hidden" hidden>Loaded content</p><form><span id="form-hidden" hidden>Form content</span></form><p id="search-text">explicit synthetic query</p>'
+  })
+  const peer = await context.newPage()
+  await peer.goto(`${peerOrigin}/journal-page-toolbox-poc`)
+  const panel = await openManagementPanel(context, extensionId)
+  await openTool(panel, 'dev.oneweb.page-toolbox')
+  const card = panel.locator('[data-testid="module-card"][data-module-id="dev.oneweb.page-toolbox"]')
+  await card.getByTestId('module-toggle').click()
+  await site.bringToFront()
+  const prepared = await panel.evaluate(async () => (await chrome.runtime.sendMessage({ channel: 'oneweb.page-toolbox.management', version: 1, type: 'PAGE_TOOLBOX_PREPARE_CURRENT_SITE' })).result)
+  expect(prepared.ok).toBe(true)
+  const confirmed = await panel.evaluate(async token => (await chrome.runtime.sendMessage({ channel: 'oneweb.page-toolbox.management', version: 1, type: 'PAGE_TOOLBOX_CONFIRM_CURRENT_SITE', token })).result, prepared.preparation.token)
+  expect(confirmed).toMatchObject({ ok: true, injected: true })
+  await expect.poll(async () => (await panel.evaluate(async () => (await chrome.runtime.sendMessage({ channel: 'oneweb.page-toolbox.management', version: 1, type: 'PAGE_TOOLBOX_STATUS' })).result)).snapshot.sessions[0]?.phase).toBe('ready')
+  const enable = async (toolId: string, settings: Record<string, string> = {}) => {
+    await site.bringToFront()
+    const result = await panel.evaluate(async input => (await chrome.runtime.sendMessage({ channel: 'oneweb.page-toolbox.management', version: 1, type: 'PAGE_TOOLBOX_SET_CURRENT_SITE_TOOL', toolId: input.toolId, enabled: true, settings: input.settings })).result, { toolId, settings })
+    expect(result).toMatchObject({ ok: true, changed: true })
+  }
+  await enable('hidden-content')
+  await expect(site.locator('#loaded-hidden')).toBeVisible()
+  await expect(site.locator('#form-hidden')).toBeHidden()
+  await enable('night-reading', { strength: 'strong' })
+  const dimmer = site.locator('[data-oneweb-page-toolbox-widget="night-reading"]')
+  await expect(dimmer).toHaveCSS('background-color', 'rgba(8, 12, 20, 0.36)')
+  await expect(dimmer).toHaveCSS('pointer-events', 'none')
+  await enable('element-spacing')
+  await site.locator('#measure-a').click({ modifiers: ['Alt'] })
+  await site.locator('#measure-b').click({ modifiers: ['Alt'] })
+  const cdp = await context.newCDPSession(site)
+  const text = async () => (await cdp.send('Accessibility.getFullAXTree')).nodes.map(node => node.name?.value ?? '').join('\n')
+  await expect.poll(text).toContain('水平间距：100 px；垂直间距：80 px')
+  await site.locator('#measure-a').evaluate(async (element) => {
+    await element.animate([{ width: '100px' }, { width: '160px' }], { duration: 30, fill: 'forwards' }).finished
+  })
+  await expect.poll(text).toContain('水平间距：40 px')
+  await enable('selection-search')
+  const outbound: string[] = []
+  site.on('request', request => outbound.push(request.url()))
+  await site.locator('#search-text').evaluate((element) => {
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    const selection = document.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+  })
+  await expect.poll(text).toContain('已就绪：explicit synthetic query')
+  expect(outbound).toEqual([])
+  await expect(peer.locator('[data-oneweb-page-toolbox-widget]')).toHaveCount(0)
+  await site.bringToFront()
+  await card.getByTestId('page-toolbox-refresh').evaluate(element => (element as HTMLButtonElement).click())
+  await expect(card.locator('[data-tool-id="night-reading"] select[data-page-toolbox-setting="strength"]')).toHaveValue('strong')
+  await expect(card.locator('input[data-page-toolbox-enabled]')).toHaveCount(7)
+  await panel.screenshot({ path: path.resolve(process.env.ONEWEB_TEST_OUTPUT_DIR || 'test-results', 'oneweb-seven-page-tools.png') })
+  await card.getByTestId('module-toggle').click()
+  await expect(site.locator('[data-oneweb-page-toolbox-widget]')).toHaveCount(0)
+  await expect(site.locator('#loaded-hidden')).toBeHidden()
+  await expect(site.locator('#form-hidden')).toBeHidden()
+  await cdp.detach()
+})
 
 interface RpcFixtureBrowserApi {
   beginHold: (_marker?: string) => Promise<string>
@@ -166,7 +234,11 @@ test('built artifact exposes a least-privilege RepoLens side panel', async ({ ex
   expect(manifest.permissions).toEqual(['activeTab', 'contextMenus', 'scripting', 'storage', 'tabs', 'sidePanel'])
   expect(manifest.optional_permissions).toEqual(['bookmarks', 'cookies', 'privacy'])
   expect(manifest.optional_host_permissions).toEqual(['https://*/*', 'http://*/*'])
-  expect(manifest.host_permissions).toEqual(['https://github.com/*', `${repolensFixtureOrigin}/*`])
+  expect(manifest.host_permissions).toEqual(['https://github.com/*'])
+  expect(manifest.sandbox.pages).toEqual(['dist/apps/sandbox.html'])
+  expect(manifest.content_security_policy.sandbox).toContain('connect-src \'none\'')
+  expect(manifest.content_security_policy.sandbox).toContain('default-src \'none\'')
+  expect(manifest.content_security_policy.extension_pages).not.toContain('\'unsafe-eval\'')
   expect(manifest.content_scripts[0].matches).toEqual(['https://github.com/*'])
   expect(JSON.stringify(manifest.content_scripts)).not.toContain('pageToolbox')
   const toolboxRuntime = fs.readFileSync(`${extensionPath}/dist/pageToolbox/index.global.js`, 'utf8')
@@ -1476,7 +1548,10 @@ test('GitHub SPA context reaches the 420px panel through the generic module host
       consoleProblems.push(`panel: ${message.text()}`)
   })
   await panel.setViewportSize({ width: 420, height: 900 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.juck.repolens`)
+  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.getByTestId('manage-modules').click()
+  await installFixtureModule(panel, repolensReferenceManifestUrl, repolensReferenceId)
+  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=${repolensReferenceId}`)
   await page.bringToFront()
 
   await expect(panel.locator('.brand div span')).toHaveText('vuejs/core', { timeout: 15_000 })
@@ -1492,6 +1567,7 @@ test('GitHub SPA context reaches the 420px panel through the generic module host
 
   const isolatedModuleIds = [
     'dev.juck.repolens',
+    repolensReferenceId,
     'dev.oneweb.bookmark-doctor',
     'dev.oneweb.clash-control',
     'dev.oneweb.browser-journal',
@@ -1567,9 +1643,9 @@ test('GitHub SPA context reaches the 420px panel through the generic module host
     window.dispatchEvent(new MessageEvent('message', {
       origin: 'https://evil.example',
       source: target.contentWindow,
-      data: { protocol: 'oneweb.module', version: 1, moduleId: 'dev.juck.repolens', type: 'MODULE_STATUS', state: 'owned' },
+      data: { protocol: 'oneweb.module', version: 1, moduleId: 'dev.oneweb.repolens-reference', type: 'MODULE_STATUS', state: 'owned' },
     }))
-    window.postMessage({ protocol: 'oneweb.module', version: 1, moduleId: 'dev.juck.repolens', type: 'MODULE_STATUS', state: 'owned' }, origin)
+    window.postMessage({ protocol: 'oneweb.module', version: 1, moduleId: 'dev.oneweb.repolens-reference', type: 'MODULE_STATUS', state: 'owned' }, origin)
   }, repolensFixtureOrigin)
   await expect(panel.locator('.bridge-state')).toHaveText(beforeAttack || '')
 
@@ -2063,12 +2139,12 @@ test('module management protects seeds and applies lifecycle changes through the
   await panel.setViewportSize({ width: 420, height: 900 })
   await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.juck.repolens`)
   await page.bringToFront()
-  await expect(panel.locator('.bridge-state')).toHaveAttribute('data-ready', 'true', { timeout: 15_000 })
+  await expect(panel.getByTestId('repolens-workspace')).toBeVisible({ timeout: 15_000 })
 
   await panel.getByTestId('manage-modules').click()
   await expect(panel.getByTestId('module-manager')).toBeVisible()
   const seedCard = panel.locator('[data-testid="module-card"][data-module-id="dev.juck.repolens"]')
-  await expect(seedCard).toContainText('OneWeb 预置')
+  await expect(seedCard).toContainText('OneWeb 内置模块')
   await seedCard.getByText('权限与来源').click()
   await expect(seedCard).toContainText('GitHub 仓库：repo、url、pageType')
   await expect(seedCard.getByTestId('module-remove')).toBeDisabled()
@@ -2094,41 +2170,11 @@ test('module management protects seeds and applies lifecycle changes through the
   await seedCard.getByTestId('module-toggle').click()
   await expect(seedCard.getByTestId('module-toggle')).toHaveAttribute('aria-checked', 'true')
   await panel.getByTestId('close-module-manager').click()
-  await expect(panel.locator('.bridge-state')).toHaveAttribute('data-ready', 'true', { timeout: 15_000 })
-  await expect(panel.frameLocator('[data-testid="oneweb-module-frame"]').locator('#repo')).toHaveText('vuejs/core')
-
-  await panel.evaluate(async (repolensOrigin) => {
-    interface StoredModule {
-      manifest: Record<string, unknown>
-      [key: string]: unknown
-    }
-    const storageKey = 'oneweb.modules.v1'
-    const stored = await chrome.storage.local.get(storageKey)
-    const records = stored[storageKey] as StoredModule[]
-    const seed = records.find(record => record.manifest.id === 'dev.juck.repolens')!
-    const timestamp = new Date().toISOString()
-    await chrome.storage.local.set({
-      [storageKey]: [
-        ...records,
-        {
-          ...structuredClone(seed),
-          manifest: {
-            ...structuredClone(seed.manifest),
-            id: 'dev.juck.fixture',
-            name: 'Fixture Module',
-            description: 'User module removal fixture',
-          },
-          source: 'user',
-          sourceUrl: `${repolensOrigin}/.well-known/oneweb-module.json`,
-          installedAt: timestamp,
-          updatedAt: timestamp,
-        },
-      ],
-    })
-  }, repolensFixtureOrigin)
+  await expect(panel.getByTestId('repolens-workspace')).toBeVisible({ timeout: 15_000 })
+  await expect(panel.getByTestId('oneweb-module-frame')).toBeHidden()
 
   await panel.getByTestId('manage-modules').click()
-  const userCard = panel.locator('[data-testid="module-card"][data-module-id="dev.juck.fixture"]')
+  const userCard = await installFixtureModule(panel, repolensReferenceManifestUrl, repolensReferenceId)
   await expect(userCard).toContainText('用户添加')
   await userCard.getByTestId('module-remove').click()
   await expect(panel.getByTestId('remove-module-dialog')).toBeVisible()
@@ -2140,7 +2186,7 @@ test('module management protects seeds and applies lifecycle changes through the
   await panel.locator('[data-confirm-remove]').click()
   await expect(panel.getByTestId('remove-module-dialog')).toBeHidden()
   await expect(userCard).toHaveCount(0)
-  await expect(panel.getByTestId('module-manager-status')).toHaveText('Fixture Module 已移除')
+  await expect(panel.getByTestId('module-manager-status')).toHaveText('RepoLens Reference 已移除')
   await expect(seedCard).toBeVisible()
 })
 
@@ -2859,7 +2905,7 @@ test('Clash Control passes the complete principal, permission and secret isolati
   expect(consoleMessages.join('\n')).not.toContain(clashControllerFixture.secret)
 
   const remotePanel = await context.newPage()
-  await remotePanel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.juck.repolens`)
+  await remotePanel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=${moduleFixtures.primary.manifest.id}`)
   const remoteFrame = remotePanel.frameLocator('[data-testid="oneweb-module-frame"]')
   expect(await remoteFrame.locator('body').evaluate((_body, secret) => ({
     hasExtensionRuntime: Boolean(globalThis.chrome?.runtime),

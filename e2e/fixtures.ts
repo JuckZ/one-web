@@ -32,11 +32,12 @@ const sdkRuntimeFiles = new Set([
 ])
 
 export const extensionPath = path.resolve(process.env.EXTENSION_PATH || process.env.ONEWEB_EXTENSION_DIR || path.join(currentDir, '../extension'))
-const packagedManifest = fs.readJsonSync(path.join(extensionPath, 'manifest.json')) as { host_permissions: string[] }
-const fixturePattern = packagedManifest.host_permissions.find(pattern => /^http:\/\/127\.0\.0\.1:\d+\/\*$/.test(pattern))
-if (!fixturePattern)
-  throw new Error('Chromium E2E requires a production test build with a loopback RepoLens origin')
-export const repolensFixtureOrigin = fixturePattern.slice(0, -2)
+const fixtureOrigin = process.env.REPOLENS_ORIGIN || 'http://127.0.0.1:14747'
+if (!fixtureOrigin || !/^http:\/\/127\.0\.0\.1:\d+$/.test(fixtureOrigin))
+  throw new Error('Chromium E2E requires REPOLENS_ORIGIN with an isolated loopback fixture origin')
+export const repolensFixtureOrigin = fixtureOrigin
+export const repolensReferenceId = 'dev.oneweb.repolens-reference'
+export const repolensReferenceManifestUrl = `${repolensFixtureOrigin}/.well-known/oneweb-reference.json`
 
 interface ExtensionFixtures {
   extraHostOrigins: string[]
@@ -137,7 +138,7 @@ interface RemoteModuleFixtureDefinition {
   capabilities: RemoteFrameModuleManifest['capabilities']
 }
 
-function renderRepoLensFixture(parentOrigin: string) {
+function renderRepoLensFixture(parentOrigin: string, moduleId = repolensReferenceId) {
   const script = [
     'import { createRemoteFrameRuntimeClient } from "/oneweb-sdk/runtime-client.js";',
     `const parentOrigin=${JSON.stringify(parentOrigin)};`,
@@ -146,7 +147,7 @@ function renderRepoLensFixture(parentOrigin: string) {
     'function clear(){currentContext=null;waiting.hidden=false;content.hidden=true}',
     'function show(value){currentContext=value;waiting.hidden=true;content.hidden=false;summary.hidden=false;document.querySelector("#repo").textContent=String(value.repo||"");document.querySelector("#meta").textContent=String(value.pageType||"")+" · 仅同步仓库标识与 URL";state.textContent="已显示缓存摘要"}',
     'window.__onewebRuntimeContextCount=0;',
-    'const client=createRemoteFrameRuntimeClient({moduleId:"dev.juck.repolens",parentOrigin,onContextUpdate(update){window.__onewebRuntimeContextCount++;const value=update.contexts&&update.contexts["github.repository"];value&&typeof value==="object"?show(value):clear()}});',
+    `const client=createRemoteFrameRuntimeClient({moduleId:${JSON.stringify(moduleId)},parentOrigin,onContextUpdate(update){window.__onewebRuntimeContextCount++;const value=update.contexts&&update.contexts["github.repository"];value&&typeof value==="object"?show(value):clear()}});`,
     'window.__onewebRuntimeClient=client;',
     'window.addEventListener("pagehide",()=>client.destroy(),{once:true});',
     'document.querySelector("#analyze").addEventListener("click",()=>{state.textContent="深度分析完成"});',
@@ -396,6 +397,30 @@ async function startRepoLensFixture(moduleFixtures: ExtensionFixtures['moduleFix
         'cache-control': 'no-store',
         'content-type': 'text/html; charset=utf-8',
       }).end(renderCapabilityRpcFrame(parentOrigin))
+      return
+    }
+    if (url.pathname === '/.well-known/oneweb-reference.json') {
+      const manifest = defineRemoteFrameModuleManifest({
+        manifest_version: ONEWEB_MODULE_MANIFEST_VERSION,
+        runtime: REMOTE_FRAME_RUNTIME,
+        id: repolensReferenceId,
+        name: 'RepoLens Reference',
+        version: '0.1.0',
+        description: 'Remote SDK context conformance fixture; independent of the packaged RepoLens app',
+        icon_url: `${repolensFixtureOrigin}/favicon.ico`,
+        entry_url: `${repolensFixtureOrigin}/embed`,
+        matches: ['https://github.com/*/*'],
+        contexts: ['github.repository'],
+        context_fields: { 'github.repository': ['repo', 'url', 'pageType'] },
+        capabilities: [],
+        activation: 'manual',
+        min_host_version: '0.0.1',
+        bridge: { protocol: ONEWEB_MODULE_PROTOCOL, version: ONEWEB_MODULE_PROTOCOL_VERSION },
+      })
+      response.writeHead(200, {
+        'cache-control': 'no-store',
+        'content-type': 'application/json',
+      }).end(JSON.stringify(manifest))
       return
     }
     if (url.pathname === '/embed') {
@@ -979,7 +1004,7 @@ export const test = base.extend<ExtensionFixtures>({
     // profile; unit tests still verify the exact user-gesture request itself.
     const fixtureOrigins = Object.values(moduleFixtures)
       .map(fixture => `${new URL(fixture.manifestUrl).origin}/*`)
-    fixtureOrigins.push(`${bookmarkProbeFixture.origin}/*`)
+    fixtureOrigins.push(`${repolensFixtureOrigin}/*`, `${bookmarkProbeFixture.origin}/*`)
     fixtureOrigins.push(`${clashControllerFixture.origin}/*`)
     fixtureOrigins.push(`${openListFixture.origin}/*`)
     fixtureOrigins.push(`${alistFixture.origin}/*`, ...extraHostOrigins)

@@ -87,13 +87,17 @@ const shadowTools: readonly ShadowToolCopy[] = Object.freeze([
     title: '解除选择与复制限制',
     description: '仅处理固定的选择、复制和右键阻断',
   }),
+  Object.freeze({ toolId: 'element-spacing', title: '元素间距', description: 'Alt + 单击两个元素，或聚焦后按 Alt + Shift + M；Escape 清除' }),
+  Object.freeze({ toolId: 'night-reading', title: '阅读遮光', description: '为当前页面增加可撤销的轻度遮光，不改变站点主题' }),
+  Object.freeze({ toolId: 'hidden-content', title: '显示已加载隐藏内容', description: '最多恢复 80 个已有可视元素；不恢复注释或访问权限' }),
+  Object.freeze({ toolId: 'selection-search', title: '选文搜索', description: '选文后明确点击 npm 或 GitHub 链接才会发送搜索词' }),
 ])
 
 const shadowStyle = `
 :host{all:initial;position:fixed;right:18px;bottom:18px;z-index:2147483646;color-scheme:light dark;font-family:Inter,system-ui,sans-serif}
 button,input{font:inherit}
 .launcher{display:grid;width:44px;height:44px;padding:0;place-items:center;border:1px solid #7c6df2;border-radius:14px;background:#6557dc;color:#fff;box-shadow:0 12px 30px #12122b3d;cursor:pointer;font-weight:800}
-.panel{position:absolute;right:0;bottom:52px;display:grid;width:min(300px,calc(100vw - 36px));gap:12px;padding:14px;border:1px solid #d8d5f7;border-radius:16px;background:#fff;color:#172033;box-shadow:0 18px 50px #12122b42}
+.panel{position:absolute;right:0;bottom:52px;display:grid;width:min(300px,calc(100vw - 36px));max-height:calc(100vh - 100px);overflow:auto;gap:12px;padding:14px;border:1px solid #d8d5f7;border-radius:16px;background:#fff;color:#172033;box-shadow:0 18px 50px #12122b42}
 .panel[hidden]{display:none}
 .heading{display:grid;gap:2px}.title{font-size:14px;font-weight:800}.scope{color:#667085;font-size:11px}
 .tools{display:grid;gap:8px}.tool{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:start;padding:9px;border:1px solid #e6e8ef;border-radius:11px}.tool strong{display:block;font-size:12px}.tool small{display:block;margin-top:2px;color:#667085;font-size:10px;line-height:1.4}
@@ -158,7 +162,7 @@ export class PageToolboxShadowControl {
     this.host = document.createElement('div')
     this.host.setAttribute(PAGE_TOOLBOX_SHADOW_HOST_ATTRIBUTE, '')
     this.host.tabIndex = 0
-    this.host.style.cssText = 'all:initial;position:fixed;right:18px;bottom:18px;z-index:2147483646'
+    this.host.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483646'
     const shadow = this.host.attachShadow({ mode: 'closed', delegatesFocus: true })
     const style = document.createElement('style')
     style.textContent = shadowStyle

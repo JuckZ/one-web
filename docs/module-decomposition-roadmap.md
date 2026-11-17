@@ -19,7 +19,7 @@ model.
 
 | Form           | Execution and trust model                                     | Typical use                                    |
 | -------------- | ------------------------------------------------------------- | ---------------------------------------------- |
-| `remote-frame` | Independently deployed web UI in a sandboxed iframe           | RepoLens and user-created web modules          |
+| `remote-frame` | Independently deployed web UI in a sandboxed iframe           | User-installed remote modules                  |
 | `builtin`      | Packaged extension code with optional privileged capabilities | Bookmarks, request rules, browsing data        |
 | `command`      | Small host-owned action without a dedicated module page       | Tab navigation, reload, search and open action |
 
@@ -30,14 +30,14 @@ module lifecycle and UI overhead.
 
 ## 3. Decomposition decisions
 
-### RepoLens — reference remote module
+### RepoLens — packaged repository application
 
-- **Form:** `remote-frame`
+- **Form:** `builtin` (migrated by [ADR-0024](adr/0024-smart-apps-and-packaged-repolens.md)).
 - **Positioning:** GitHub repository intelligence.
-- **Role in the platform:** The first seeded module and the compatibility reference for third-party
-  module authors.
-- **Next action:** Move its hard-coded origin, protocol and GitHub context delivery behind the
-  generic module host without changing current user behavior.
+- **Role in the platform:** Public GitHub analysis without an independent service. The legacy
+  remote integration remains a conformance reference, not a runtime dependency.
+- **Current scope:** Repository overview, similar projects, activity metrics, local cache/snapshots
+  and report export. User HTML mini apps use a separate opaque sandbox with no builtin privileges.
 
 ### Bookmark Doctor — first privileged built-in module
 
@@ -2092,3 +2092,13 @@ and real OpenList/AList acceptance prerequisites are recorded in
 [`post-phase-9-release-convergence.md`](checkpoints/post-phase-9-release-convergence.md). This is a
 release checkpoint, not Phase 10; staging, committing, tagging, real-service access and publication
 all remain separately authorized actions.
+
+## 2026-11-17 — Userscript consolidation
+
+The user authorized generic-tool rewrites, OneWeb's standalone userscript output, then removal of
+the legacy project and GitHub repository. This supersedes the historical keep-read-only/archive
+instructions for `one-tampermonkey`; those sections document their original phase. The seven shared
+page tools, GM adapter, retired prototype-only behavior and cleanup acceptance are specified in
+[userscript distribution](specs/userscript-distribution.md) and [ADR-0025](adr/0025-oneweb-userscript-distribution.md).
+The old prototype is no longer a runtime, build or test dependency. Final verification and actual
+cleanup results are recorded in the consolidation task, without replacing earlier evidence.

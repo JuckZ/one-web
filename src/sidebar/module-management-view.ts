@@ -468,10 +468,11 @@ export class ModuleManagementView {
     this.installOverlay.addEventListener('keydown', this.handleInstallerKeydown)
   }
 
-  async refresh() {
+  async refresh(options: { preserveFeedback?: boolean } = {}) {
     if (this.disposed)
       return
-    this.setFeedback('正在读取已安装模块…')
+    if (!options.preserveFeedback)
+      this.setFeedback('正在读取已安装模块…')
     try {
       await this.reloadRecords()
       if (this.disposed)
@@ -491,7 +492,8 @@ export class ModuleManagementView {
       if (this.disposed)
         return
       this.render()
-      this.setFeedback(`已安装 ${this.records.length} 个模块`)
+      if (!options.preserveFeedback)
+        this.setFeedback(`已安装 ${this.records.length} 个模块`)
     }
     catch {
       if (this.disposed)
