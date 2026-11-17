@@ -187,7 +187,7 @@ test('authorized page assistant freezes selection, previews an action and respec
   await expect(site.locator('[data-oneweb-assistant]')).toHaveCount(0)
 })
 
-async function openPageAssistant(context: import('@playwright/test').BrowserContext, extensionId: string, origin: string) {
+async function openPageAssistant(context: import('@playwright/test').BrowserContext, extensionId: string, origin: string, viewport?: { width: number, height: number }) {
   const panel = await context.newPage()
   await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
   await panel.locator('[data-destination="settings"]').click()
@@ -196,6 +196,8 @@ async function openPageAssistant(context: import('@playwright/test').BrowserCont
   await panel.getByLabel('API key', { exact: true }).fill('local-fixture-key')
   await panel.getByTestId('assistant-save-provider').click()
   const site = await context.newPage()
+  if (viewport)
+    await site.setViewportSize(viewport)
   await site.goto(`${origin}/article`)
   await panel.evaluate(() => (document.querySelector('[data-destination="settings"]') as HTMLButtonElement).click())
   await expect(panel.getByTestId('assistant-enable-site')).toBeVisible()
@@ -274,13 +276,14 @@ test('page assistant opens a compact exclusive dock with dismissible secondary o
 })
 
 test('selection overflow preserves the editor selection through preview and explicit replacement (PS-04)', async ({ context, extensionId, assistantFixture }, testInfo) => {
-  const { site } = await openPageAssistant(context, extensionId, assistantFixture.origin)
-  await site.setViewportSize({ width: 320, height: 640 })
+  const { site } = await openPageAssistant(context, extensionId, assistantFixture.origin, { width: 320, height: 640 })
   const editor = site.locator('textarea')
-  await editor.evaluate((element: HTMLTextAreaElement) => {
-    element.focus()
-    element.setSelectionRange(6, 11)
-  })
+  await editor.click()
+  await editor.press('Home')
+  for (let index = 0; index < 6; index++)
+    await editor.press('ArrowRight')
+  for (let index = 0; index < 5; index++)
+    await editor.press('Shift+ArrowRight')
   const toolbar = site.getByRole('toolbar', { name: 'OneWeb 选文操作', exact: true })
   await expect(toolbar).toBeVisible()
   expect(await toolbar.getByRole('button').count()).toBeLessThanOrEqual(7)

@@ -601,6 +601,75 @@ describe('page Toolbox exact-origin controller', () => {
     expect(beta.port.disconnect).not.toHaveBeenCalled()
   })
 
+  it('keeps both origins alive when issued sync acknowledgements arrive after a newer plan', async () => {
+    const harness = createHarness(settingsFor('https://alpha.example', 'https://beta.example'))
+    harness.grantedOrigins.add('https://alpha.example/*')
+    harness.grantedOrigins.add('https://beta.example/*')
+    await harness.controller.status()
+    const alpha = createHostPort()
+    const beta = createHostPort({ tabId: 2, url: 'https://beta.example/home', documentId: 'doc-beta' })
+    const init = await connectPort(harness.controller, alpha, 7)
+    await connectPort(harness.controller, beta, 8)
+    for (const [toolId, settings] of [
+      ['password-visibility', { gesture: 'double-click' }],
+      ['free-page-edit', { mode: 'rich-text' }],
+    ] as const) {
+      expect(await harness.controller.setCurrentSiteTool({
+        channel: 'oneweb.page-toolbox.management',
+        version: 1,
+        type: 'PAGE_TOOLBOX_SET_CURRENT_SITE_TOOL',
+        toolId,
+        settings,
+        enabled: true,
+      })).toMatchObject({ ok: true, synchronized: 1 })
+    }
+    expect(alpha.messages.at(-1)).toMatchObject({ type: 'PAGE_TOOLBOX_SYNC', planRevision: 3 })
+    for (const revision of [2, 2, 3, 2, 1])
+      alpha.onMessage.emit(createPageToolboxSynced(init.sessionNonce, init.binding, revision))
+    expect(alpha.port.disconnect).not.toHaveBeenCalled()
+    expect(beta.port.disconnect).not.toHaveBeenCalled()
+    expect(beta.messages).toHaveLength(1)
+    await expect(harness.controller.status()).resolves.toMatchObject({
+      ok: true,
+      snapshot: { sessions: [
+        { exactOrigin: 'https://alpha.example', planRevision: 3, phase: 'ready' },
+        { exactOrigin: 'https://beta.example', planRevision: 1, phase: 'ready' },
+      ] },
+    })
+    expect(alpha.messages.at(-1)).toMatchObject({ type: 'PAGE_TOOLBOX_SYNC', planRevision: 3 })
+  })
+
+  it.each(['nonce', 'binding', 'future'] as const)('still rejects %s acknowledgement authority before tolerating an old revision', async (invalid) => {
+    const harness = createHarness(settingsFor('https://alpha.example', 'https://beta.example'))
+    harness.grantedOrigins.add('https://alpha.example/*')
+    harness.grantedOrigins.add('https://beta.example/*')
+    await harness.controller.status()
+    const alpha = createHostPort()
+    const beta = createHostPort({ tabId: 2, url: 'https://beta.example/home', documentId: 'doc-beta' })
+    const init = await connectPort(harness.controller, alpha, 7)
+    await connectPort(harness.controller, beta, 8)
+    await harness.controller.setCurrentSiteTool({
+      channel: 'oneweb.page-toolbox.management',
+      version: 1,
+      type: 'PAGE_TOOLBOX_SET_CURRENT_SITE_TOOL',
+      toolId: 'free-page-edit',
+      settings: { mode: 'rich-text' },
+      enabled: true,
+    })
+    alpha.onMessage.emit(createPageToolboxSynced(
+      invalid === 'nonce' ? 'ff'.repeat(24) : init.sessionNonce,
+      invalid === 'binding' ? { ...init.binding, generation: init.binding.generation + 1 } : init.binding,
+      invalid === 'future' ? 3 : 1,
+    ))
+    expect(alpha.port.disconnect).toHaveBeenCalledOnce()
+    expect(beta.port.disconnect).not.toHaveBeenCalled()
+    expect(beta.messages).toHaveLength(1)
+    await expect(harness.controller.status()).resolves.toMatchObject({
+      ok: true,
+      snapshot: { sessions: [{ exactOrigin: 'https://beta.example', phase: 'ready', planRevision: 1 }] },
+    })
+  })
+
   it('persists and synchronizes only finite current-site tool plans', async () => {
     const harness = createHarness()
     await approveAlpha(harness)

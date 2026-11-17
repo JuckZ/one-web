@@ -590,7 +590,9 @@ export class PageToolboxController {
         return
       }
       if (message.type === 'PAGE_TOOLBOX_SYNCED') {
-        if (session.phase !== 'ready' || message.planRevision !== session.planRevision)
+        // An issued plan can be acknowledged after a newer plan has already been sent.
+        // The authenticated acknowledgement never changes the latest plan or its authority.
+        if (session.phase !== 'ready' || message.planRevision > session.planRevision)
           this.invalidateSession(session, 'port-loss')
         return
       }

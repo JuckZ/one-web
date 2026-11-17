@@ -1,6 +1,6 @@
 # Chrome Web Store Listing — OneWeb
 
-> Last Updated: 2026-11-17. Local implementation draft; no store submission performed.
+> Last Updated: 2026-11-17. Experimental project; no store submission performed.
 
 ## Store Listing
 
@@ -83,9 +83,9 @@ Homepage/support: https://github.com/JuckZ/one-web (issues for support).
 
 ## Version History
 
-| Version | Date       | Changes                                                                                                                                               | Status      |
-| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| 0.1.0   | 2026-11-16 | Two smart application forms; unified enable/manage list; packaged RepoLens without standalone service; release model connections after service errors | Local draft |
+| Version | Date       | Changes                                                                                                                                          | Status                            |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------- |
+| 0.1.0   | 2026-11-17 | Two smart application forms; packaged RepoLens; seven opt-in page tools and userscript distribution; preserve tools during rapid setting changes | Experimental; no store submission |
 
 ## Review Notes
 
@@ -102,4 +102,4 @@ selection search. Search sends up to200 characters only when its link is clicked
 no new Chromium API or host permission is added. Firefox additionally discloses `searchTerms`.
 A separate self-contained userscript build distributes these page tools through a script manager;
 it is outside the Chrome Web Store package and does not turn the extension into a script manager.
-Refresh Page Toolbox screenshots before any submission. This remains local work, not a store release.
+Refresh Page Toolbox screenshots before any submission. This experimental distribution uses GitHub Releases; no store submission has been performed.

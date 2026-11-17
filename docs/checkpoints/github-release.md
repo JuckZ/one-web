@@ -30,3 +30,12 @@ The userscript suite now explicitly selects channel chromium. A local cache cont
 Chromium binary reproduced the old failure and verifies the unchanged six-case suite after the fix.
 No browser/test gate or retries setting is removed. Exact failing and repaired hosted run IDs belong
 to the task record; Deploy's successful artifact build does not replace CI acceptance.
+
+The next hosted CI exposed a real Page Toolbox acknowledgement race: a legitimate ACK for an older
+issued plan arrived after a newer plan was sent, and the host incorrectly disposed the session.
+The correction tolerates authenticated acknowledgements of issued revisions without promoting their
+authority; future/wrong-session/wrong-binding cases still disconnect only that session. The new
+public-controller regression fails before the correction. The separate PS-04 fixture now establishes
+its narrow viewport before injecting the assistant and uses native editor keyboard selection, so
+resize dismissal does not race initial selection. The resize-dismissal scenario and all PS-04
+preview/writeback/request-count assertions remain in place.

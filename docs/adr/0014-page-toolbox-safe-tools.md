@@ -100,3 +100,12 @@ At acceptance OneWeb passes typecheck, full-repository lint, all 494 unit tests,
 `git diff --check`. RepoLens remains on its protected 34-test/14-file offline vendor baseline with
 the already documented expected SDK drift, and `one-tampermonkey` remains clean and read-only at
 `448bf86d031881b3df687a6bcda416acd39307fa`.
+
+## Acknowledgement sequencing correction (2026-11-17)
+
+A host may issue SYNC3 before the content's legitimate acknowledgement of SYNC2 arrives. Once the
+port, nonce, full binding and ready phase are authenticated, an acknowledgement of an issued revision
+at or below the latest sent revision is harmless and does not change the current plan or authority.
+It must not tear down the document. Future revisions, invalid envelopes and wrong session/binding
+still fail closed. A two-origin public-controller regression delivers delayed and duplicate
+acknowledgements while verifying the latest plan and the other origin remain unchanged.
