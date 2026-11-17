@@ -23,3 +23,10 @@ Actual source SHAs, workflow runs, downloaded asset checks, independent review, 
 results and remaining limits are recorded in Git common-dir agent-factory/tasks/github-release-20261117\*.
 Remote evidence is available through this repository's Actions and Releases pages. Historical local
 counts do not establish hosted or public-download success.
+
+The first hosted CI at910aaad exposed a browser-install mismatch: Actions installs full Chromium
+with --no-shell, but the userscript configuration defaulted to the absent headless-shell executable.
+The userscript suite now explicitly selects channel chromium. A local cache containing only the full
+Chromium binary reproduced the old failure and verifies the unchanged six-case suite after the fix.
+No browser/test gate or retries setting is removed. Exact failing and repaired hosted run IDs belong
+to the task record; Deploy's successful artifact build does not replace CI acceptance.

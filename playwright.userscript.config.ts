@@ -6,5 +6,5 @@ export default defineConfig({
   retries: 0,
   workers: 1,
   timeout: 30_000,
-  use: { headless: true, trace: 'retain-on-failure' },
+  use: { channel: 'chromium', headless: true, trace: 'retain-on-failure' },
 })
