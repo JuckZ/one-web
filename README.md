@@ -1,5 +1,14 @@
 # OneWeb
 
+> **实验项目 / Experimental**
+>
+> OneWeb 目前用于功能验证和个人试用。功能、接口与数据结构可能随迭代调整，尚不适合作为生产环境依赖。
+> 发布制品供试用与反馈；请在测试环境或确认可恢复的数据上使用。
+
+[下载试用制品](https://github.com/JuckZ/one-web/releases/latest) ·
+[安装油猴脚本](https://github.com/JuckZ/one-web/releases/latest/download/one-web.user.js) ·
+[查看构建与发布状态](https://github.com/JuckZ/one-web/actions)
+
 OneWeb is a modular browser companion that brings search, organization, browser utilities and
 smart analysis into one side workspace. The private root package and browser-facing identities use
 the OneWeb name; RepoLens is one module rather than the host identity.
@@ -31,8 +40,8 @@ pnpm build:all          # Chromium、Firefox、userscript 三种产物
 
 安装、逐站启用、七项工具、更新、回退与卸载见 [油猴用户指南](docs/userscript-guide.md)。
 维护者使用 [统一发布流程](docs/releases/README.md)；`pnpm release:rehearse` 本地构建和校验三种目标，
-正式版本由精确标签/源码 CI 与完整资产验证后发布到 GitHub Releases。当前尚未创建首个公开 Release，
-可按指南安装本地候选文件。脚本与扩展分别保存设置，脚本无需本地服务或 LLM API。
+公开版本由精确标签/源码 CI 与完整资产验证后发布到 GitHub Releases，可从上方入口安装或下载。
+统一更新通道不改变项目的实验状态。脚本与扩展分别保存设置，脚本无需本地服务或 LLM API。
 
 范围、旧功能处置和验收见 [迁移规格](docs/specs/userscript-distribution.md) 与
 [架构决策](docs/adr/0025-oneweb-userscript-distribution.md)。
