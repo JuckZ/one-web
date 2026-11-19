@@ -3,6 +3,7 @@ import process from 'node:process'
 import { defineConfig } from 'wxt'
 import { firefoxVendorPolicyPlugin } from './scripts/firefox-vendor-policy'
 import { resolveRepoLensOrigin } from './scripts/repolens-origin'
+import { port } from './scripts/utils'
 import { getManifest } from './src/manifest'
 
 export default defineConfig({
@@ -13,11 +14,24 @@ export default defineConfig({
   outDir: 'artifacts/build',
   outDirTemplate: '{{browser}}',
   hooks: {
-    'config:resolved': (wxt) => {
-      // Use the resolved CLI target; bare `wxt -b firefox` has no EXTENSION env.
-      wxt.config.outDir = process.env.ONEWEB_EXTENSION_DIR
-        ? resolve(wxt.config.root, process.env.ONEWEB_EXTENSION_DIR)
-        : resolve(wxt.config.root, 'artifacts/build', wxt.config.browser === 'firefox' ? 'firefox' : 'chromium')
+    config: {
+      resolved: (wxt) => {
+        const purpose = wxt.config.command === 'serve' ? 'dev' : 'build'
+        // Use the resolved CLI target; bare `wxt -b firefox` has no EXTENSION env.
+        wxt.config.outDir = process.env.ONEWEB_EXTENSION_DIR
+          ? resolve(wxt.config.root, process.env.ONEWEB_EXTENSION_DIR)
+          : resolve(wxt.config.root, 'artifacts', purpose, wxt.config.browser === 'firefox' ? 'firefox' : 'chromium')
+      },
+    },
+    build: {
+      manifestGenerated: (wxt, manifest) => {
+        const csp = manifest.content_security_policy
+        if (wxt.server && typeof csp === 'object' && csp.extension_pages) {
+          const socket = new URL(wxt.server.origin)
+          socket.protocol = socket.protocol === 'https:' ? 'wss:' : 'ws:'
+          csp.extension_pages = csp.extension_pages.replace(/(connect-src [^;]+);/u, `$1 ${socket.origin};`)
+        }
+      },
     },
   },
   manifest: async ({ browser, mode }) => {
@@ -34,8 +48,10 @@ export default defineConfig({
     '@oneweb/module-sdk': resolve('packages/module-sdk/src/index.ts'),
   },
   webExt: { disabled: true },
-  dev: { server: { port: Number(process.env.PORT) || 3303 } },
+  dev: { server: { port, strictPort: true } },
   vite: ({ browser, mode }) => ({
+    // The two dev servers have different entrypoint dependency graphs.
+    ...(mode === 'development' ? { cacheDir: resolve('node_modules/.vite', `oneweb-${browser}`) } : {}),
     plugins: browser === 'firefox' && mode === 'production' ? [firefoxVendorPolicyPlugin()] : [],
     define: {
       __DEV__: process.env.NODE_ENV !== 'production',

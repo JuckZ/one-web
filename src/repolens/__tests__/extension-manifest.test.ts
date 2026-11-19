@@ -1,6 +1,23 @@
+import config from '../../../wxt.config'
 import { getManifest } from '../../manifest'
 
+const updateManifest = config.hooks!.build!.manifestGenerated!
+type Wxt = Parameters<typeof updateManifest>[0]
+
 describe('browser-target extension manifests', () => {
+  it('adds the WebSocket for the actual WXT dev server to the extension page CSP', () => {
+    const manifest = {
+      manifest_version: 3 as const,
+      name: 'OneWeb',
+      version: '0.1.0',
+      content_security_policy: { extension_pages: 'script-src \'self\'; connect-src https: http:;' },
+    }
+    updateManifest({} as Wxt, manifest)
+    expect(manifest.content_security_policy.extension_pages).toBe('script-src \'self\'; connect-src https: http:;')
+    updateManifest({ server: { origin: 'http://localhost:3317' } } as Wxt, manifest)
+    expect(manifest.content_security_policy.extension_pages).toBe('script-src \'self\'; connect-src https: http: ws://localhost:3317;')
+  })
+
   it('generates a Chromium MV3 service worker and side panel', async () => {
     const manifest = await getManifest({
       target: 'chromium',

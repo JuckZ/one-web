@@ -1,6 +1,6 @@
 # OneWeb 代理开发入口
 
-工程工具借鉴 Magpie 的短入口、可验证交付和复盘机制，按 OneWeb 现有 Vue/TypeScript/Vitest/浏览器链路适配。产品选择仍由根 `AGENTS.md` 决定。
+工程工具借鉴 Magpie 的短入口、可验证交付和复盘机制，按 OneWeb 现有 WXT/React/TypeScript/Vitest 链路适配。产品选择仍由根 `AGENTS.md` 决定。
 
 ## 运行一次开发任务
 
@@ -28,11 +28,21 @@ python3 scripts/agent-factory/factory.py attest --evidence /path/from/check/evid
 
 浏览器检查按任务所需运行，分别使用 `artifacts/test/chromium/` 和 `artifacts/test/firefox/`；同一目标目录只运行一个构建者，共享 SDK 构建通过 wrapper 串行执行。构建生成了受版本管理的文件时，核对并固定生成结果后重新验证；源码状态变化不会保留旧“通过”。
 
-Python 3.9+、Git、POSIX/Linux/macOS 为工具前提；Windows 通过 WSL 使用。Node/pnpm 与浏览器安装要求沿用 `package.json`、CI 和原有脚本。
+需要 Python 3.9+ 和 Git。Linux/macOS 使用上面的 `python3` 命令，Windows 直接在 PowerShell 或 Git Bash 中使用本机 Python：
+
+```powershell
+python scripts/agent-factory/factory.py doctor --config .agent-factory.json
+python scripts/agent-factory/factory.py check --config .agent-factory.json
+python scripts/agent-factory/factory.py check --config .agent-factory.chromium.json
+python scripts/agent-factory/factory.py check --config .agent-factory.firefox.json
+python scripts/agent-factory/factory.py attest --evidence "C:/实际路径/evidence.json"
+```
+
+对每个检查分别回验其实际返回的路径。Windows 使用启动 Factory 的 Python 执行配置里的 `python3`，并支持 `pnpm.cmd` 等参数受限的批处理入口。命令和相对 `PATH` 项以仓库根为基准，命令行回执使用 UTF-8。需要任意参数的自定义检查可直接使用 `.exe`。开发使用 `pnpm dev:test`，双浏览器的端口、开发产物和验收目录见 [统一开发与测试](../../README.md#同时开发与测试)。运行浏览器门禁前，用 `pnpm exec playwright install chromium firefox` 安装测试浏览器。已有系统 Firefox 时，也可将 `FIREFOX_BINARY` 设置为其可执行文件的绝对路径。
 
 ## 验证记录证明什么
 
-日志与 JSON 保存在 `git rev-parse --path-format=absolute --git-common-dir` 下的 `agent-factory/runs/`，避免污染源树。记录绑定 HEAD、index、tracked 与非忽略 untracked 内容、配置摘要及每项命令结果。失败或输入改变时返回非零。多个 worktree 使用同一个全套检查锁。
+日志与 JSON 保存在 `git rev-parse --path-format=absolute --git-common-dir` 下的 `agent-factory/runs/`，避免污染源树。记录绑定 HEAD、index、tracked 与非忽略 untracked 内容、配置摘要及每项命令结果。失败或输入改变时返回非零。同一操作系统上的多个 worktree 使用同一个全套检查锁。Windows 和 WSL 共同访问一个 Git common-dir 时，锁的互操作性未验证，请分开使用。
 
 记录为本地未签名证据，防止误用旧结果；不抵御有权限篡改记录的人，也不覆盖 ignored 文件、工具链、环境变量、真实外部服务和检查间修改后复原。测试命令在普通进程中执行，不是权限沙箱。
 

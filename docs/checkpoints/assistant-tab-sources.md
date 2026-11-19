@@ -1,6 +1,6 @@
 # 助手跨标签页问答 · 2026-11-19
 
-对应 [ISA F11](../../ISA.md#f11--在侧栏问多个已打开的网页)。基线 `2e9f5a89878e4aac3e541d4ab92faf0effd1b27a`；本轮是未提交工作树，不复用 F10 迁移的验收签名。
+对应 [ISA F11](../../ISA.md#f11--在侧栏问多个已打开的网页)。基线 `2e9f5a89878e4aac3e541d4ab92faf0effd1b27a`；首次验收在未提交工作树完成，其记录独立于 F10 迁移。
 
 ## 从什么变成什么
 
@@ -31,4 +31,16 @@
 - 浏览器使用隔离的测试配置，覆盖扩展工作区，Chrome 原生侧栏容器和首次权限弹窗未验收。
 - 测试使用合成正文和本地模型替身。商业模型回答质量和多模型切换未验收。
 - 本轮范围为 OneWeb 现有助手。Chrome 私有顶栏按钮、Gemini Live、Google 账号联动和通用自动浏览未实现。
-- 改动保留在未提交的工作树，未推送或发布。正式的 committed-HEAD 评审未执行。`factory check` 在 Windows 缺少 `fcntl.flock`，退出 2，未取得 attest。日志在 `artifacts/assistant-f11-factory.log`。
+- 首次验收时，`factory check` 在 Windows 缺少 `fcntl.flock`，退出 2，未取得 attest。日志在 `artifacts/assistant-f11-factory.log`。
+
+## 提交与正式评审
+
+跨页助手已提交为 `9d7c62e87c75b7884a8698e1d05a949d0a97861b`。`Review.ts` 在干净工作树对相对于 `2e9f5a89878e4aac3e541d4ab92faf0effd1b27a` 的 23 个文件完成静态评审，结果为 `pass`，无 findings。评审器的本地复跑受执行策略限制，测试由上面的本地验收覆盖。评审与散列核验见 [回执](../../artifacts/reviews/assistant-tab-sources/receipt.json)。提交保留在本地。
+
+## 原生入口与后续能力实验
+
+- Windows 上用 Chromium 149 的新隔离配置加载已核对 SHA-256 的 19 个生产文件。Playwright 在浏览器级调用 `Extensions.triggerAction`，读回原生 `SIDE_PANEL`，面板同时显示两个不同 loopback 来源。两站在选择前均未授权。选择 `localhost` 后，浏览器的可访问性树记录 OneWeb 首次申请该站点权限。后台窗口点击无法确认弹窗已处理，来源数仍为 0。首授允许和拒绝的完整交互未验证。 [侧栏上下文](../../artifacts/assistant-platform-probe/final-panel-readback.log) · [原生弹窗树](../../artifacts/assistant-platform-probe/final-prompt-tree.json)
+- 在隔离 Chromium 的实际扩展页面探测端侧听写，`SpeechRecognition.available({processLocally: true})` 对 `zh-CN` 和 `en-US` 都返回 `downloadable`。先下载语言包，再以合成语音测试听写到草稿和显式发送。此次未下载、录音或转写。Playwright 缺少自己的 Firefox 二进制，Firefox 听写未验证。 [浏览器证据](../../artifacts/assistant-platform-probe/speech-chromium.log) · [MDN](https://developer.mozilla.org/en-US/docs/Web/API/Web_Speech_API/Using_the_Web_Speech_API)
+- Chrome 公开扩展入口可用工具栏 `action`、侧栏和快捷键。Ask Gemini 的浏览器私有顶栏位置不在公开 API 中。Firefox 原生侧栏由 manifest 声明，现有 `open-workspace` 快捷键打开完整工作区标签页。 [Chrome Side Panel](https://developer.chrome.com/docs/extensions/reference/api/sidePanel) · [Firefox Sidebar](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/sidebarAction)
+- `gemini-3.8-live` 通过独立 WebSocket 会话处理 PCM16LE 音频，原生输入 16 kHz，输出 24 kHz。现有文本助手使用 `chat/completions`。浏览器直连 Live 需要后端签发短期令牌。该协议可用本地服务替身验证建连、打断和关闭，真实服务与音频行为尚未实测。 [Live 音频协议](https://aistudio.google.com/docs/live-api/capabilities) · [短期令牌](https://aistudio.google.com/docs/live-api/ephemeral-tokens)
+- Google Connected Apps 的权限随 Gemini Apps 使用。OneWeb 若支持 Drive 导入，应单独授权用户选定文件并预览后附加。网页自动化沿用固定任务，用户选择来源或选区，并确认写回。账号联动和通用 Auto browse 本轮处于研究阶段。 [Connected Apps](https://support.google.com/gemini/answer/15229592) · [Drive OAuth 范围](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)

@@ -49,6 +49,11 @@ updated: 2026-11-19
 - [x] ISC-40: 只把显式选择且有权限的标签页正文作为有独立编号的参考材料发送给现有模型服务；限制每页与总量，不保存这批正文到对话历史，无需扩大 manifest 权限。
 - [x] ISC-41: 切换活动标签页不使多页参考失效；来源导航、关闭、撤权、过期或工作区关闭后不可继续使用。既有单页、选文写回、导入和模型设置的行为保持不变。
 
+### F12 · Windows 原生开发与验收
+
+- [x] ISC-42: Windows 直接用当前 Python 运行 Factory 的 `doctor`、`check` 和 `attest`，覆盖核心、Chromium 和 Firefox。验收记录绑定实际输入与配置。Chromium 和 Firefox 开发服务可同时运行，工作区可加载并连接对应开发服务，开发缓存、产物与验收目录隔离。
+- [x] ISC-43: 原生 Windows 保留跨 worktree 验收互斥、失败继续报告及超时回收整棵进程树。原生程序仍按 argv 启动，批处理入口仅接受明确受限的参数。POSIX 路径沿用现有锁和进程组语义。
+
 ## Test Strategy
 
 | Criterion | Kind   | Evidence                   | Expected | Probe                                                                                        | Assay tier |
@@ -61,6 +66,9 @@ updated: 2026-11-19
 | ISC-39 | browser | 多页选择、移除、来源跳转、快捷提示词 | pass | e2e/workspace.spec.ts 的跨标签页问答场景 | literal |
 | ISC-40 | bash | 受信任协议、请求体、限额、存储不含来源正文 | exit 0 | `pnpm exec vitest run src/workspace/__tests__/tab-sources.test.ts` | literal |
 | ISC-41 | browser | 导航、撤权与原有单页操作回归 | pass | 跨标签页用例及 workspace 既有用例 | literal |
+
+| ISC-42 | manual | Windows 核心、双浏览器、证据回验 | pass | `factory.py doctor`、`check` 和 `attest` 分别运行三个配置，隔离加载两个开发包并核对产物散列 | literal |
+| ISC-43 | bash | 互斥、超时回收、argv 和证据拒绝 | exit 0 | `python -B -m unittest discover -s scripts/agent-factory/tests -v` | literal |
 
 ## Decisions
 
@@ -100,6 +108,12 @@ next: 在支持POSIX的环境为最终版本取得factory check/attest；本次�
 acceptance: pass 2026-11-19 F11 隔离扩展工作区，独立 360/1440 px 验收和最终产物复拍见 [跨标签页问答检查点](docs/checkpoints/assistant-tab-sources.md#界面验收)。原生侧栏、首次系统权限弹窗和商业模型未验收。
 
 verification: F11 在未提交的基线 `2e9f5a8` 工作树验证。1,008 项单测、87 项 Chromium 端到端用例及 Firefox 助手 5/5 通过。Chromium 与 Firefox 生产权限声明均与迁移基线一致。独立第三轮源码复评未发现剩余阻断。
+
+### F12 · Windows 原生开发与验收
+
+acceptance: pass 2026-11-19 Windows 11 双浏览器开发包工作区读回，见 `artifacts/assistant-platform-probe/dev-chromium-final.png` 和 `artifacts/assistant-platform-probe/dev-firefox-final.png`。Chromium 3303 连接 Vite 与 WXT，Firefox 自定义 3314 成功加载 `@vite/client` 和工作区。双目标开发重建前后生产与验收产物逐字一致。
+
+verification: Windows Python 3.12 原生 Factory 36 项回归通过。首次核心和双浏览器检查及回验通过，最终提交回执按对应 HEAD 留存于 Git common-dir 的 `agent-factory/runs/`，入口见 [代理开发指南](docs/agent-development/README.md#可直接运行的入口)。本轮未在 Linux/macOS 重新执行原生门禁。
 
 ## Articulation Log
 

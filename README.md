@@ -221,7 +221,8 @@ Chromium 开发时加载 `artifacts/dev/chromium/`，WXT 开发服务为 `http:/
 只需要开发构建时使用 `pnpm dev`；Firefox 使用 `pnpm dev-firefox`，加载
 `artifacts/dev/firefox/`，开发服务端口为 3304。WXT 管理入口 watch 与 React 页面热更新，
 开发配置关闭自动启动浏览器；首次加载及需要时重新加载扩展，由当前隔离测试或手动加载流程负责。
-开发服务只用于开发，生产包不依赖它。
+两个开发服务各用独立的 Vite 依赖缓存，HMR 连接使用实际开发端口。
+开发服务只用于开发，生产包不依赖它。Windows 上的原生检查入口见 [代理开发指南](docs/agent-development/README.md#可直接运行的入口)。
 
 | 用途         | Chromium                                            | Firefox                                           |
 | ------------ | --------------------------------------------------- | ------------------------------------------------- |

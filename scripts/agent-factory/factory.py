@@ -9,6 +9,7 @@ it cannot defend against somebody who can alter the evidence or this program.
 import argparse
 import contextlib
 import datetime
+import errno
 import hashlib
 import json
 import math
@@ -34,6 +35,9 @@ SCOPE = {
     "assurance": "local unsigned evidence; not proof against evidence tampering or malicious checks",
     "submodules": "unsupported; a populated tracked directory causes a closed failure",
 }
+
+
+BINARY = getattr(os, "O_BINARY", 0)
 
 
 class FactoryError(Exception):
@@ -119,31 +123,40 @@ def read_config(root, name):
     return config, hashlib.sha256(raw).hexdigest(), relative
 
 
+def try_suite_lock(fd):
+    if os.name == "nt":
+        import msvcrt
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError as exc:
+            if exc.errno != errno.EACCES:
+                raise
+            return False
+    if os.name != "posix":
+        raise FactoryError("suite locking requires Windows or POSIX")
+    import fcntl
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except BlockingIOError:
+        return False
+
+
 @contextlib.contextmanager
 def suite_lock(common, timeout):
-    if os.name != "posix":
-        raise FactoryError("suite locking requires POSIX fcntl.flock; Windows is unsupported")
-    import fcntl
     state = common / "agent-factory"
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd = os.open(str(state / "suite.lock"), os.O_RDWR | os.O_CREAT, 0o600)
-    acquired = False
+    fd = os.open(str(state / "suite.lock"), os.O_RDWR | os.O_CREAT | BINARY, 0o600)
     try:
         deadline = time.monotonic() + timeout
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                acquired = True
-                break
-            except BlockingIOError:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise FactoryError("timed out waiting for common-directory suite.lock")
-                time.sleep(min(0.1, remaining))
+        while not try_suite_lock(fd):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise FactoryError("timed out waiting for common-directory suite.lock")
+            time.sleep(min(0.1, remaining))
         yield state
     finally:
-        if acquired:
-            fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
 
 
@@ -171,7 +184,7 @@ def file_digest(path):
         raise FactoryError("tracked directories/submodules are unsupported: " + str(path))
     if not stat.S_ISREG(before.st_mode):
         raise FactoryError("special input files are unsupported: " + str(path))
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    flags = os.O_RDONLY | BINARY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     fd = os.open(str(path), flags)
     with os.fdopen(fd, "rb") as stream:
         opened = os.fstat(stream.fileno())
@@ -185,8 +198,13 @@ def file_digest(path):
             digest.update(chunk)
         after = os.fstat(stream.fileno())
     current = path.lstat()
-    identity = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns, s.st_mode)
-    if identity(before) != identity(after) or identity(after) != identity(current):
+    # Windows supplies different ctime and mode fields for handles and paths.
+    # Compare those fields within each API and file identity across both APIs.
+    identity = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, stat.S_IFMT(s.st_mode))
+    metadata = lambda s: (s.st_ctime_ns, s.st_mode)
+    if (identity(before) != identity(opened) or identity(opened) != identity(after)
+            or identity(after) != identity(current) or metadata(opened) != metadata(after)
+            or metadata(before) != metadata(current)):
         raise FactoryError("input changed while hashing: " + str(path))
     return b"file:" + str(mode).encode() + b":" + digest.hexdigest().encode()
 
@@ -236,6 +254,24 @@ def end_process_group(process):
     process.wait()
 
 
+@contextlib.contextmanager
+def start_check(root, argv, output):
+    if os.name == "nt":
+        from windows_process import start
+        with start(root, argv, output) as process:
+            yield process
+        return
+    process = subprocess.Popen(
+        argv, cwd=root, stdin=subprocess.DEVNULL,
+        stdout=output, stderr=subprocess.STDOUT, start_new_session=True,
+    )
+    try:
+        yield process
+    except BaseException:
+        end_process_group(process)
+        raise
+
+
 def run_check(root, entry, log):
     start = time.monotonic()
     record = {
@@ -243,27 +279,18 @@ def run_check(root, entry, log):
         "timeout_seconds": entry["timeout_seconds"], "exit_code": None,
         "timed_out": False, "status": "failed", "log_path": str(log),
     }
-    fd = os.open(str(log), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    fd = os.open(str(log), os.O_WRONLY | os.O_CREAT | os.O_EXCL | BINARY, 0o600)
     with os.fdopen(fd, "wb") as output:
         try:
-            process = subprocess.Popen(
-                entry["argv"], cwd=str(root), stdin=subprocess.DEVNULL,
-                stdout=output, stderr=subprocess.STDOUT, start_new_session=True,
-            )
+            with start_check(root, entry["argv"], output) as process:
+                record["exit_code"] = process.wait(timeout=entry["timeout_seconds"])
+        except subprocess.TimeoutExpired:
+            record["timed_out"] = True
+            record["exit_code"] = process.returncode
+            output.write(b"\n[agent-factory] check timed out; check process tree terminated\n")
         except OSError as exc:
             record["error"] = str(exc)
             output.write((str(exc) + "\n").encode("utf-8", "replace"))
-        else:
-            try:
-                record["exit_code"] = process.wait(timeout=entry["timeout_seconds"])
-            except subprocess.TimeoutExpired:
-                record["timed_out"] = True
-                end_process_group(process)
-                record["exit_code"] = process.returncode
-                output.write(b"\n[agent-factory] check timed out; process group terminated\n")
-            except BaseException:
-                end_process_group(process)
-                raise
     record["duration_seconds"] = round(time.monotonic() - start, 6)
     if record["exit_code"] == 0 and not record["timed_out"]:
         record["status"] = "passed"
@@ -272,7 +299,7 @@ def run_check(root, entry, log):
 
 def write_evidence(path, evidence):
     temporary = path.with_suffix(".tmp")
-    fd = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    fd = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL | BINARY, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
         json.dump(evidence, stream, indent=2, sort_keys=True, ensure_ascii=True)
         stream.write("\n")
@@ -391,14 +418,19 @@ def worktree(args):
 def doctor(args):
     root, common = repository()
     config, _, relative = read_config(root, args.config)
-    if os.name != "posix":
-        raise FactoryError("POSIX fcntl.flock is required; Windows is unsupported")
     missing = []
     for entry in config["checks"]:
         command = entry["argv"][0]
-        executable = (root / command).resolve() if "/" in command else shutil.which(command)
-        if not executable or not os.path.isfile(executable) or not os.access(executable, os.X_OK):
-            missing.append(command)
+        if os.name == "nt":
+            from windows_process import resolve_command
+            try:
+                resolve_command(root, entry["argv"])
+            except OSError as exc:
+                missing.append(str(exc))
+        else:
+            executable = (root / command).resolve() if "/" in command else shutil.which(command)
+            if not executable or not os.path.isfile(executable) or not os.access(executable, os.X_OK):
+                missing.append(command)
     snapshot(root)
     print("Repository: " + str(root))
     print("Common directory: " + str(common))
@@ -439,4 +471,8 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    if os.name == "nt":
+        # Redirected output includes paths that may exceed the active code page.
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
     sys.exit(main())

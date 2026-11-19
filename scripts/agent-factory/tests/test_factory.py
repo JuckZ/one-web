@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'factory.py'
@@ -37,9 +38,9 @@ class FactoryIntegrationTests(unittest.TestCase):
         (self.repo / '.agent-factory.json').write_text(json.dumps(
             {'version': 1, 'checks': checks, 'lock_timeout_seconds': lock}))
 
-    def run_factory(self, *args, cwd=None):
-        return subprocess.run([sys.executable, str(SCRIPT), *args], cwd=cwd or self.repo,
-                              text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+    def run_factory(self, *args, cwd=None, env=None):
+        return subprocess.run([sys.executable, str(SCRIPT), *args], cwd=cwd or self.repo, env=env,
+                              encoding="utf-8", stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
 
     def check(self):
         result = self.run_factory('check', '--config', '.agent-factory.json')
@@ -153,7 +154,12 @@ class FactoryIntegrationTests(unittest.TestCase):
         self.assertIn('configuration hash', result.stderr)
 
     def test_symlink_target_change_rejected(self):
-        (self.repo / 'link').symlink_to('source.txt')
+        try:
+            (self.repo / 'link').symlink_to('source.txt')
+        except OSError as exc:
+            if os.name == 'nt' and exc.winerror == 1314:
+                self.skipTest('symlink creation requires Windows Developer Mode or permission')
+            raise
         result, path = self.check()
         self.assertEqual(result.returncode, 0)
         (self.repo / 'link').unlink()
@@ -192,17 +198,111 @@ class FactoryIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(str(self.repo / '.git'), result.stdout)
 
+    def wait_for_path(self, path, process):
+        deadline = time.monotonic() + 10
+        while not path.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(.02)
+        self.assertTrue(path.exists(), f"missing process marker: {path}")
+
     def test_shared_lock_timeout(self):
-        import fcntl
-        state = self.repo / '.git/agent-factory'
-        state.mkdir()
-        with (state / 'suite.lock').open('w') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            self.config([self.entry('ok', 'pass')], lock=.1)
-            result = self.run_factory('check', '--config', '.agent-factory.json')
-            self.assertEqual(result.returncode, 2)
-            self.assertIn('suite.lock', result.stderr)
-        self.assertFalse((state / 'runs').exists())
+        destination = self.parent / 'linked'
+        self.git('worktree', 'add', '--detach', str(destination))
+        ready = self.parent / 'ready'
+        release = self.parent / 'release'
+        hold_lock = chr(10).join([
+            'import time',
+            'from pathlib import Path',
+            f'Path({str(ready)!r}).touch()',
+            f'while not Path({str(release)!r}).exists():',
+            '    time.sleep(.02)',
+        ])
+        self.config([self.entry('holder', hold_lock, 15)])
+        (destination / '.agent-factory.json').write_text(json.dumps({
+            'version': 1, 'checks': [self.entry('ok', 'pass')], 'lock_timeout_seconds': .2,
+        }))
+        with subprocess.Popen([sys.executable, str(SCRIPT), 'check', '--config', '.agent-factory.json'],
+                              cwd=self.repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8") as holder:
+            try:
+                self.wait_for_path(ready, holder)
+                result = self.run_factory('check', '--config', '.agent-factory.json', cwd=destination)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('suite.lock', result.stderr)
+            finally:
+                release.touch()
+                out, err = holder.communicate(timeout=20)
+            self.assertEqual(holder.returncode, 0, out + err)
+        result = self.run_factory('check', '--config', '.agent-factory.json', cwd=destination)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_timeout_stops_a_child_and_allows_next_check(self):
+        ready = self.parent / 'grandchild-started'
+        late = self.parent / 'grandchild-survived'
+        child = ('import time; from pathlib import Path; '
+                 f'Path({str(ready)!r}).touch(); time.sleep(4); Path({str(late)!r}).touch()')
+        parent = f'import subprocess, sys, time; subprocess.Popen([sys.executable, "-c", {child!r}]); time.sleep(20)'
+        self.config([self.entry('watchdog', parent, 2), self.entry('following', 'print("still runs")')])
+        result, evidence = self.check()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertTrue(ready.exists(), 'child did not start before the timeout')
+        results = json.loads(evidence.read_text())['checks']
+        self.assertTrue(results[0]['timed_out'])
+        self.assertEqual(results[1]['status'], 'passed')
+        time.sleep(4)
+        self.assertFalse(late.exists())
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows executable lookup')
+    def test_windows_relative_path_entries_use_worktree_root(self):
+        nested = self.repo / 'ignored'
+        for base, code in ((self.repo, 0), (nested, 22)):
+            tools = base / 'tools'
+            tools.mkdir(parents=True)
+            (tools / 'factory-fixture.cmd').write_text(f'@exit /b {code}' + chr(10))
+        self.config([{'name': 'relative-path', 'argv': ['factory-fixture'], 'timeout_seconds': 5}])
+        env = {**os.environ, 'PATH': 'tools' + os.pathsep + os.environ['PATH']}
+        result = self.run_factory('check', '--config', '.agent-factory.json', cwd=nested, env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows redirected stream encoding')
+    def test_windows_redirected_unicode_check_name_and_evidence_path(self):
+        localized = self.repo.with_name('OneWeb 测试')
+        self.repo.rename(localized)
+        self.repo = localized
+        self.config([self.entry('验证', 'pass')])
+        env = {**os.environ, 'PYTHONIOENCODING': 'cp1252'}
+        result = self.run_factory('check', '--config', '.agent-factory.json', env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('PASSED 验证', result.stdout)
+        evidence_path = next(line.removeprefix('Evidence: ') for line in result.stdout.splitlines() if line.startswith('Evidence: '))
+        self.assertIn('OneWeb 测试', evidence_path)
+        self.assertEqual(self.attest(evidence_path).returncode, 0)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows batch shims')
+    def test_windows_batch_shim_and_python_alias(self):
+        batch = self.repo / 'test shim.cmd'
+        batch.write_text(chr(10).join([
+            '@echo off',
+            'if not "%~1"=="verify:chromium" exit /b 21',
+            'if not "%~2"=="key=value" exit /b 22',
+            'if not "%~3"=="" exit /b 23',
+            'exit /b 0',
+            '',
+        ]))
+        native = self.entry('python-alias', 'import sys; assert sys.platform == "win32"')
+        native['argv'][0] = 'python3'
+        shim = {'name': 'batch', 'argv': ['./test shim.cmd', 'verify:chromium', 'key=value'], 'timeout_seconds': 5}
+        self.config([shim, native])
+        doctor = self.run_factory('doctor', '--config', '.agent-factory.json')
+        self.assertEqual(doctor.returncode, 0, doctor.stderr)
+        result, evidence = self.check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.attest(evidence).returncode, 0)
+        shim['argv'][1] = 'verify:chromium & exit 0'
+        self.config([shim, native])
+        result, evidence = self.check()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        checks = json.loads(evidence.read_text())['checks']
+        self.assertIn('unsafe Windows batch path or argument', checks[0]['error'])
+        self.assertEqual(checks[1]['status'], 'passed')
 
 
 if __name__ == '__main__':
