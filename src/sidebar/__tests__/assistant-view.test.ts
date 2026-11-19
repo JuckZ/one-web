@@ -3,6 +3,7 @@ import { PageContentRuntime } from '~/assistantContent/runtime'
 import { AssistantController } from '~/modules/builtin/assistant/controller'
 import { AssistantClient, handleAssistantMessage } from '~/modules/builtin/assistant/protocol'
 import { handlePageContextMessage, PageContextClient, PageContextController } from '~/workspace/page-context'
+import { TabSourceClient } from '~/workspace/tab-sources'
 import { AssistantView } from '../assistant-view'
 
 function storage() {
@@ -416,5 +417,76 @@ it('keeps the draft sendable after the first conversation reply is lost in brows
   root.querySelector<HTMLButtonElement>('[data-testid="assistant-send"]')!.click()
   await vi.waitFor(() => expect(root.querySelector('[data-testid="assistant-status"]')?.textContent).toBe('已完成'))
   expect(requests).toBe(2)
+  view.dispose()
+})
+
+it('does not send a draft while a selected tab is still being authorized', async () => {
+  const requests = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify({ choices: [{ message: { content: 'Fixture answer' } }] }), { headers: { 'Content-Type': 'application/json' } }))
+  const attachment = { tabId: 1, token: 'tab-source', title: '待授权的标签页', url: 'https://page.example/', truncated: false }
+  const controller = new AssistantController({
+    storage: storage(),
+    secrets: storage(),
+    permissions: { contains: async () => true },
+    fetch: requests,
+    resolveTabSources: async () => [{ ...attachment, capturedAt: Date.now(), text: 'Expected source', type: 'page' }],
+  })
+  await controller.configureProvider({ baseUrl: 'https://model.example/v1/', models: ['fixture'], key: 'fixture', remember: false })
+  const client = new AssistantClient({ sendMessage: async message => handleAssistantMessage(controller, message, {
+    id: 'test',
+    url: 'chrome-extension://test/sidebar.html',
+    documentId: 'ui',
+  }, 'test', 'chrome-extension://test/') })
+  const tabSources = new TabSourceClient({ sendMessage: async (message: unknown) => {
+    const command = (message as { command: string }).command
+    return { channel: 'oneweb.tab-sources.v1', ok: true, value: command === 'list' ? [{ ...attachment, originPattern: 'https://page.example/*' }] : attachment }
+  } })
+  let grant!: (_allowed: boolean) => void
+  const askPermission = vi.fn(() => new Promise<boolean>((resolve) => {
+    grant = resolve
+  }))
+  const root = document.createElement('section')
+  document.body.replaceChildren(root)
+  const view = new AssistantView(root, { client, permissions: { request: askPermission }, tabSources })
+  await client.savePrompt({ title: '比较', template: 'Compare the sources' })
+  await view.open('assistant')
+  const input = root.querySelector<HTMLTextAreaElement>('[aria-label="消息"]')!
+  input.value = 'Compare the selected source'
+  input.dispatchEvent(new Event('input'))
+  ;[...root.querySelectorAll('button')].find(button => button.textContent?.includes('添加标签页'))!.click()
+  await vi.waitFor(() => expect(root.querySelector('.assistant-picker-option')).not.toBeNull())
+  root.querySelector<HTMLButtonElement>('.assistant-picker-option')!.click()
+  expect(askPermission).toHaveBeenCalledOnce()
+  root.querySelector<HTMLButtonElement>('[data-testid="assistant-send"]')!.click()
+  expect(root.querySelector('[data-testid="assistant-status"]')?.textContent).toContain('等待标签页')
+  expect(requests).not.toHaveBeenCalled()
+  grant(true)
+  await vi.waitFor(() => expect(root.textContent).toContain('标签页已附加'))
+  input.value += ' /比较'
+  input.setSelectionRange(input.value.length, input.value.length)
+  input.dispatchEvent(new Event('input'))
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  await vi.waitFor(() => expect(root.textContent).toContain('已选择提示词：比较'))
+  const repeatedEnter = new KeyboardEvent('keydown', { key: 'Enter', repeat: true, bubbles: true, cancelable: true })
+  expect(input.dispatchEvent(repeatedEnter)).toBe(false)
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(requests).not.toHaveBeenCalled()
+  expect(root.querySelector('[data-testid="assistant-status"]')?.textContent).toContain('已选择提示词')
+  expect(input.value.trim()).toBe('Compare the selected source')
+  root.querySelector<HTMLButtonElement>('[data-testid="assistant-send"]')!.click()
+  await vi.waitFor(() => expect(root.textContent).toContain('Fixture answer'))
+  expect(requests.mock.calls[0][1]?.body).toContain('Expected source')
+  view.connectionLost()
+  await vi.waitFor(() => expect(root.querySelector('[data-testid="assistant-stop"]')).toBeNull())
+  expect(root.textContent).toContain('已失效，请重新添加')
+  const recoveredInput = root.querySelector<HTMLTextAreaElement>('[aria-label="消息"]')!
+  recoveredInput.value = 'A draft with stale sources'
+  recoveredInput.dispatchEvent(new Event('input'))
+  root.querySelector<HTMLButtonElement>('[data-testid="assistant-send"]')!.click()
+  expect(root.textContent).toContain('草稿已保留')
+  expect(requests).toHaveBeenCalledOnce()
+  root.querySelector<HTMLButtonElement>('[data-testid="assistant-tab-source-remove"]')!.click()
+  root.querySelector<HTMLButtonElement>('[data-testid="assistant-send"]')!.click()
+  await vi.waitFor(() => expect(requests).toHaveBeenCalledTimes(2))
+  expect(requests.mock.calls[1][1]?.body).not.toContain('Expected source')
   view.dispose()
 })

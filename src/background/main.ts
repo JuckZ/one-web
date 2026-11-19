@@ -1,6 +1,7 @@
 import type { Runtime } from 'webextension-polyfill'
 import { SmartAppsController } from '~/apps/controller'
 import { handleSmartAppsMessage } from '~/apps/protocol'
+import { readPageReference } from '~/assistantContent/page-reference'
 import { PAGE_CHANNEL } from '~/assistantContent/runtime'
 import { ASSISTANT_PORT } from '~/modules/builtin/assistant/contracts'
 import { AssistantController } from '~/modules/builtin/assistant/controller'
@@ -80,9 +81,11 @@ import { StorageModuleAdapter } from '~/modules/storage-module-adapter'
 import { StorageModuleController } from '~/modules/storage-module-controller'
 import { validateStorageModuleProtocolRequest } from '~/modules/storage-module-protocol'
 import browser from '~/platform/browser'
+import { acceptAssistantWorkspace } from '~/workspace/assistant-connection'
 import { handlePageActionMessage, PageActionController } from '~/workspace/page-actions'
 import { handlePageContextMessage, PageContextController } from '~/workspace/page-context'
 import { createPageContextInjection, type PageScripting } from '~/workspace/page-injection'
+import { handleTabSourceMessage, TabSourceController } from '~/workspace/tab-sources'
 import { VideoReadingController } from '~/workspace/video-reading'
 import { VisionController } from '~/workspace/vision'
 import { configureChromiumActionEntry } from './browser-action-entry'
@@ -101,6 +104,22 @@ export function initializeBackground() {
     fallbackPage: async () => (await browser.tabs.query({ currentWindow: true }))
       .filter(tab => /^https?:\/\//.test(tab.url ?? ''))
       .sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))[0],
+  })
+  const tabSources = new TabSourceController({
+    list: () => browser.tabs.query({ windowType: 'normal' }),
+    get: id => browser.tabs.get(id),
+    permissions: browser.permissions,
+    read: async (tabId, capture, expected) => {
+      const target = expected?.nativeDocumentId ? { tabId, documentIds: [expected.nativeDocumentId] } : { tabId, frameIds: [0] }
+      const args = expected ? [capture, { href: expected.href, documentId: expected.documentId }] : [capture]
+      const [result] = await browser.scripting.executeScript({ target, func: readPageReference, args })
+      const value = result?.result as ReturnType<typeof readPageReference> | undefined
+      return value ? { ...value, nativeDocumentId: (result as { documentId?: string }).documentId } : null
+    },
+    focus: async (tabId, windowId) => {
+      await browser.tabs.update(tabId, { active: true })
+      await browser.windows.update(windowId, { focused: true })
+    },
   })
   const sessionEntries: Record<string, unknown> = {}
   const smartAppsController = new SmartAppsController({ storage: browser.storage.local })
@@ -124,6 +143,7 @@ export function initializeBackground() {
     },
     permissions: browser.permissions,
     resolveAttachment: (token, owner) => pageContextController.resolveAttachment(token, owner),
+    resolveTabSources: (tokens, owner) => tabSources.resolve(tokens, owner),
   })
   const videoReadingController = new VideoReadingController({
     page: pageContextController,
@@ -704,10 +724,17 @@ export function initializeBackground() {
         port.disconnect()
         return
       }
-      const owner = port.sender.documentId ?? port.sender.url!
-      port.onDisconnect.addListener(() => {
-        repoLensController.cancelOwner(owner)
+      const sender = port.sender
+      const dispatch = (message: unknown, owner: string) => {
+        const workspaceSender = { id: sender.id, url: sender.url, documentId: owner }
+        return handleTabSourceMessage(tabSources, message, workspaceSender, browser.runtime.id, extensionBaseUrl)
+          ?? handleAssistantMessage(assistantController, message, workspaceSender, browser.runtime.id, extensionBaseUrl)
+          ?? handlePageContextMessage(pageContextController, message, workspaceSender, browser.runtime.id, extensionBaseUrl)
+      }
+      acceptAssistantWorkspace(port, dispatch, (owner) => {
+        repoLensController.cancelOwner(sender.documentId ?? sender.url!)
         assistantController.cancelOwner(owner)
+        tabSources.clearOwner(owner)
         void pageContextController.restorePage(owner)
       })
       return
@@ -748,7 +775,7 @@ export function initializeBackground() {
   browser.tabs.onActivated.addListener(async (info) => {
     currentWindowId = info.windowId
     await pageActionController.deactivateOthers(info.tabId)
-    assistantController.invalidatePage()
+    assistantController.invalidatePage(undefined, false)
     videoReadingController.invalidate()
     visionController.invalidate()
     await pageContextController.invalidate()
@@ -764,6 +791,7 @@ export function initializeBackground() {
     if (changeInfo.url || changeInfo.status === 'loading')
       videoDubbingController.invalidate(tabId)
     if (changeInfo.url || changeInfo.status === 'loading') {
+      tabSources.invalidate(tabId)
       assistantController.invalidatePage(tabId)
       void pageContextController.invalidate(tabId)
       void pageActionController.invalidateTab(tabId, true)
@@ -777,6 +805,7 @@ export function initializeBackground() {
   })
 
   browser.tabs.onRemoved.addListener((tabId) => {
+    tabSources.invalidate(tabId)
     assistantController.invalidatePage(tabId)
     void pageContextController.invalidate(tabId)
     void pageActionController.invalidateTab(tabId, true)
@@ -791,7 +820,8 @@ export function initializeBackground() {
     void assistantController.permissionsChanged()
     void pageActionController.permissionsChanged()
     if (permissions.origins?.length) {
-      assistantController.invalidatePage()
+      void tabSources.invalidateRevoked()
+      assistantController.invalidatePage(undefined, false)
       void pageContextController.invalidate()
       // Also release retained runtimes unknown to a freshly restarted worker.
       void browser.tabs.query({}).then(tabs => Promise.allSettled(tabs

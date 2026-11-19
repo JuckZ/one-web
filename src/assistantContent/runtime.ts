@@ -1,4 +1,5 @@
 import { byteLength, isRecord } from '~/modules/builtin/assistant/contracts'
+import { readPageReference } from './page-reference'
 import { PageQuoteAnchors } from './quotes'
 import { PageAssistantSurface } from './surface'
 import { readVideoPage } from './video-reading'
@@ -168,72 +169,11 @@ export class PageContentRuntime {
   }
 
   private capture() {
-    const preferred = [...this._document.querySelectorAll('main,article,[role="main"]')].find((element) => {
-      let current: Element | null = element
-      while (current) {
-        if (this.excluded(current))
-          return false
-        current = current.parentElement
-      }
-      return true
-    })
-    const root = preferred ?? this._document.body
-    const pieces: string[] = []
-    let elements = 0
-    let bytes = 0
-    let truncated = false
-    const append = (value: string) => {
-      if (bytes >= 65536) {
-        truncated = true
-        return
-      }
-      const available = 65536 - bytes
-      if (byteLength(value) > available) {
-        let result = ''
-        for (const character of value) {
-          const length = byteLength(character)
-          if (bytes + length > 65536)
-            break
-          result += character
-          bytes += length
-        }
-        pieces.push(result)
-        truncated = true
-      }
-      else {
-        pieces.push(value)
-        bytes += byteLength(value)
-      }
-    }
-    const visit = (node: Node) => {
-      if (truncated)
-        return
-      if (node.nodeType === 3) {
-        append((node.textContent ?? '').replace(/\s+/g, ' '))
-        return
-      }
-      if (node.nodeType !== 1)
-        return
-      const element = node as Element
-      if (++elements > 3000) {
-        truncated = true
-        return
-      }
-      if (this.excluded(element))
-        return
-      const block = /^(?:P|DIV|SECTION|ARTICLE|MAIN|H[1-6]|LI|BLOCKQUOTE|BR|TR)$/.test(element.tagName)
-      if (block)
-        append('\n')
-      for (const child of element.childNodes)
-        visit(child)
-      if (block)
-        append('\n')
-    }
-    visit(root)
-    const text = pieces.join('').replace(/[ \t]+\n/g, '\n').replace(/\n[ \t]+/g, '\n').replace(/\n{2,}/g, '\n').trim()
-    if (!text)
+    const reference = readPageReference(true, undefined, this._document)
+    if (!('text' in reference))
       throw new Error('此页面没有可读取的正文')
-    return { text, truncated, method: preferred ? 'article' : 'visible-text' }
+    const { text, truncated, method } = reference
+    return { text, truncated, method }
   }
 
   private selection(editorAction = false) {

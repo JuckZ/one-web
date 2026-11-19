@@ -24,8 +24,10 @@ import { StorageModuleClient } from '~/modules/storage-module-client'
 import type { InstalledModuleRecord } from '~/modules/types'
 import browser from '~/platform/browser'
 import { resolveRepoLensInitFields } from '~/repolens/authorization'
+import { createAssistantWorkspaceTransport } from '~/workspace/assistant-connection'
 import { PageActionClient } from '~/workspace/page-actions'
 import { PageContextClient } from '~/workspace/page-context'
+import { TabSourceClient } from '~/workspace/tab-sources'
 import { WorkspaceController, type WorkspaceSnapshot, WorkspaceView } from '~/workspace/workspace'
 import { type AssistantMode, AssistantView } from './assistant-view'
 import { ModuleManagementView } from './module-management-view'
@@ -111,21 +113,27 @@ const workspaceRoot = document.querySelector<HTMLElement>('[data-testid="workspa
 const workspace = new WorkspaceController({ storage: browser.storage.local, listModules: () => managementClient.list() })
 const workspaceView = new WorkspaceView(workspaceRoot, workspace)
 const assistantSurface = document.createElement('section')
-const pageContextClient = new PageContextClient({ sendMessage: message => browser.runtime.sendMessage(message) })
+let reportAssistantDisconnect: (() => void) | undefined
+const assistantPort = createAssistantWorkspaceTransport(
+  () => browser.runtime.connect({ name: ASSISTANT_PORT }),
+  () => reportAssistantDisconnect?.(),
+)
+const pageContextClient = new PageContextClient(assistantPort)
 const pageActionClient = new PageActionClient({ sendMessage: message => browser.runtime.sendMessage(message) })
 const assistantView = new AssistantView(assistantSurface, {
-  client: new AssistantClient({ sendMessage: message => browser.runtime.sendMessage(message) }),
+  client: new AssistantClient(assistantPort),
   permissions: browser.permissions,
   onConversationOpen: () => workspace.open('assistant'),
   onDraftReturn: closeModuleManager,
   pageContext: pageContextClient,
+  tabSources: new TabSourceClient(assistantPort),
   pageActions: pageActionClient,
 })
-const assistantPort = browser.runtime.connect({ name: ASSISTANT_PORT })
+reportAssistantDisconnect = () => assistantView.connectionLost()
 const appsSurface = document.createElement('section')
 const smartAppsView = new SmartAppsView(appsSurface, {
   client: new SmartAppsClient({ sendMessage: message => browser.runtime.sendMessage(message) }),
-  assistant: new AssistantClient({ sendMessage: message => browser.runtime.sendMessage(message) }),
+  assistant: new AssistantClient(assistantPort),
   page: pageContextClient,
   permissions: browser.permissions,
   sandboxUrl: browser.runtime.getURL('/sandbox.html'),

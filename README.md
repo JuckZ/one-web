@@ -121,6 +121,12 @@ and **Alt+Shift+K** for Quick Ask. The browser can reserve shortcuts; adjust con
 extension-shortcut settings. Context menus offer selection questions, translation, explanation
 and page summary. Full-tab mode can use the most recently active ordinary web tab as its source.
 
+To compare open pages from the workspace, type `@` or click **＋ 添加标签页**, then select up to ten
+ordinary web tabs. Click a numbered source to return to its tab, or remove it before sending.
+Try **比较所选网页** to draft the first question. Type `/` to choose a saved prompt. Only explicitly
+selected text is shared on send; there is no default sharing of the active tab. A closed, reloaded
+or unauthorized source must be removed or reselected before another send.
+
 The in-page **打开 OneWeb** menu contains these complete browser tasks:
 
 - **网页智能工具箱** searches scoped page/selection/editor actions, favorites and recent actions.

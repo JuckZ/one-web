@@ -2,6 +2,8 @@ export const ASSISTANT_CHANNEL = 'oneweb.assistant.v1'
 export const ASSISTANT_PORT = 'oneweb.assistant.workspace.v1'
 export const ASSISTANT_LIMIT = 2 * 1024 * 1024
 export const ASSISTANT_STORAGE_KEY = 'oneweb.assistant.v1'
+export const MAX_TAB_SOURCES = 10
+export const TAB_SOURCE_BYTES = 12 * 1024
 export const ASSISTANT_SECRET_KEY = 'oneweb.assistant.secret.v1'
 
 export type AssistantIntent = 'chat' | 'summarize' | 'translate' | 'explain' | 'rewrite' | 'writing'
@@ -51,6 +53,7 @@ export interface StartInput {
   language?: string
   promptId?: string
   attachmentToken?: string | null
+  tabSourceTokens?: string[]
 }
 export interface AssistantPrompt {
   id: string

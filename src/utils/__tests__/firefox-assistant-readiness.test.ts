@@ -48,7 +48,7 @@ it('fills the newly loaded settings form before issuing a single native save ges
     },
   }
   try {
-    await expect(runFirefoxAssistantScenario(driver, 'panel', 'http://127.0.0.1', { text: 0, translation: 0, aborted: 0 })).rejects.toBe(stop)
+    await expect(runFirefoxAssistantScenario(driver, 'panel', 'http://127.0.0.1', { text: 0, translation: 0, aborted: 0, tabReferences: [] })).rejects.toBe(stop)
     expect(saved).toEqual([{
       '服务地址': 'http://127.0.0.1/assistant/v1/',
       '模型（每行一个）': 'firefox-assistant-fixture',

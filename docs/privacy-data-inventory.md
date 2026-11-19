@@ -155,6 +155,18 @@ selection action. Page text is capped at 64 KiB, selection text at 16 KiB; attac
 strip query and fragment before retention. Page text remains untrusted reference material and
 cannot grant extension authority.
 
+Multi-tab chat is a separate explicitly selected source list in the packaged workspace. The picker
+reads titles and scrubbed URLs of up to 100 recent ordinary HTTP(S) tabs (excludes private windows,
+privileged pages and discarded tabs). Metadata stays local. A trusted picker action requests only
+that site's existing optional host permission; the background checks it before reading top-frame
+text in the isolated world and again before a model request. At most ten snapshots of up to 12 KiB
+each (120 KiB of source text total) are held in background memory for up to ten minutes of use.
+Only the current selection is included in the requested model chat; neither a tab token nor its
+raw snapshot is written to history. The user’s prompts and answers still follow history preferences.
+Navigation, closure, revoked access, expired context or workspace disconnect prevents live reuse.
+Switching tabs alone does not retarget sources. No new manifest permission or remote module capability
+is required. Site grants still use the browser’s extension permissions UI and can be revoked there.
+
 Page/editor tokens expire after ten minutes and bind to the owner, tab, document and source.
 Navigation or permission revocation invalidates live page operations while saved conversations
 remain readable. Writing results require a separate click and reject changed editor text or

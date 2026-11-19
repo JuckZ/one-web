@@ -18,6 +18,7 @@ export interface FirefoxAssistantRequests {
   text: number
   translation: number
   aborted: number
+  tabReferences: string[]
 }
 
 export async function runFirefoxAssistantScenario(
@@ -117,6 +118,32 @@ export async function runFirefoxAssistantScenario(
   await driver.wait('document.querySelectorAll("[data-oneweb-translation]").length===0', 'Firefox translation restoration')
   assert.equal(await driver.execute('return document.querySelector("#assistant-source").textContent'), 'Website edited its own content')
 
+  await driver.newTab(`${origin}/assistant/second`)
+  await driver.wait('document.title==="Second Firefox source"', 'Firefox second source fixture')
+  await driver.switchWindow(panelHandle)
+  await driver.execute('document.querySelector("[data-destination=assistant]").click();return true')
+  await driver.wait('document.querySelector("[data-testid=assistant-workspace] h1")?.textContent==="有什么想一起完成的？"', 'Firefox multi-tab composer')
+  for (const title of ['Firefox assistant acceptance', 'Second Firefox source']) {
+    await driver.click('.assistant-composer-actions button[aria-expanded]:first-child')
+    await driver.execute(`
+      const input=document.querySelector('.assistant-picker input');
+      input.value=arguments[0];input.dispatchEvent(new Event('input',{bubbles:true}));return true;
+    `, [title])
+    await driver.wait('document.querySelector(".assistant-picker-option")', `Firefox tab picker for ${title}`)
+    await driver.click('.assistant-picker-option')
+    await driver.wait('document.querySelector(".assistant-picker").hidden', `Firefox attached ${title}`)
+  }
+  await driver.execute(`
+    const input=document.querySelector('[aria-label="消息"]');
+    input.value='Compare both Firefox sources';input.dispatchEvent(new Event('input',{bubbles:true}));return true;
+  `)
+  await driver.click('[data-testid=assistant-send]')
+  await driver.wait('document.querySelector("[data-testid=assistant-status]")?.textContent==="已完成"', 'Firefox multi-tab model answer')
+  assert.equal(requests.tabReferences.length, 2)
+  assert.match(requests.tabReferences[0], /Website edited its own content/)
+  assert.match(requests.tabReferences[1], /Distinct second source/)
+
+  await driver.switchWindow(site)
   await driver.click('#assistant-source')
   await driver.execute('document.querySelector("#assistant-source").textContent="HOLD-FIREFOX-STREAM";const r=document.createRange();r.selectNodeContents(document.querySelector("#assistant-source"));getSelection().removeAllRanges();getSelection().addRange(r);document.dispatchEvent(new Event("selectionchange"));return true')
   await driver.wait('!document.querySelector("[data-oneweb-assistant]").shadowRoot.querySelector(".toolbar").hidden', 'Firefox cancellable selection')
@@ -141,5 +168,5 @@ export async function runFirefoxAssistantScenario(
   while (requests.aborted === 0 && Date.now() < deadline)
     await new Promise(resolve => setTimeout(resolve, 50))
   assert.ok(requests.aborted >= 1, 'Firefox revocation retained an open provider stream')
-  process.stdout.write(`Firefox assistant gates: 4/4 passed (selection/text safety, preview/writeback, reading/translation recovery, revocation/HTTP abort/peer isolation) ${JSON.stringify(requests)}\n`)
+  process.stdout.write(`Firefox assistant gates: 5/5 passed (selection/text safety, preview/writeback, reading/translation recovery, multi-tab references, revocation/HTTP abort/peer isolation) ${JSON.stringify({ text: requests.text, translation: requests.translation, aborted: requests.aborted })}\n`)
 }

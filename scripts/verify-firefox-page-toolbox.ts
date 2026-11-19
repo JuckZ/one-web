@@ -8,7 +8,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import fs from 'fs-extra'
-import { runFirefoxAssistantScenario } from './firefox-assistant-scenario'
+import { type FirefoxAssistantRequests, runFirefoxAssistantScenario } from './firefox-assistant-scenario'
 import { resolveFirefoxBinary, terminateProcessGroup } from './firefox-runner'
 import { type FirefoxSmartAppsDriver, runFirefoxSmartAppsScenario } from './firefox-smart-apps-scenario'
 import { prepareFirefoxTestAudio } from './firefox-test-audio'
@@ -343,13 +343,18 @@ async function startFixtures() {
   const videoBytes = await fs.readFile(new URL('../e2e/assets/dubbing.webm', import.meta.url))
   const speechBytes = dubbingWav()
   const dubbingRequests = { translation: 0, speech: 0 }
-  const assistantRequests = { text: 0, translation: 0, aborted: 0 }
+  const assistantRequests: FirefoxAssistantRequests = { text: 0, translation: 0, aborted: 0, tabReferences: [] }
   const clashRequests: FirefoxClashRequests = { version: 0, configs: 0, proxies: 0, unauthorized: 0 }
   const server = createServer((request, response) => {
     const url = new URL(request.url || '/', 'http://127.0.0.1')
     if (url.pathname === '/assistant/article') {
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
         .end('<!doctype html><meta charset="utf-8"><title>Firefox assistant acceptance</title><main><h1>Firefox reading fixture</h1><p id="assistant-source">Known Firefox page context.</p><p>Another bounded paragraph.</p></main><textarea>Hello world!</textarea>')
+      return
+    }
+    if (url.pathname === '/assistant/second') {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+        .end('<!doctype html><meta charset="utf-8"><title>Second Firefox source</title><main>Distinct second source.</main>')
       return
     }
     if (url.pathname === '/assistant/v1/chat/completions') {
@@ -366,6 +371,10 @@ async function startFixtures() {
           return
         }
         assistantRequests.text++
+        for (const message of input.messages) {
+          if (message.role === 'user' && message.content.startsWith('Reference ['))
+            assistantRequests.tabReferences.push(message.content)
+        }
         response.on('close', () => {
           if (!response.writableEnded)
             assistantRequests.aborted++
@@ -831,7 +840,7 @@ async function runFirefoxScenario(
   sendRequests: { me: number, tools: number, add: number, undone: number, unauthorized: number },
   dubbingRequests: { translation: number, speech: number },
   clashRequests: FirefoxClashRequests,
-  assistantRequests: { text: number, translation: number, aborted: number },
+  assistantRequests: FirefoxAssistantRequests,
 ) {
   await client.command('WebDriver:NewSession', { capabilities: { alwaysMatch: {} } })
   const handles = await client.command('WebDriver:GetWindowHandles')

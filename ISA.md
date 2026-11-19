@@ -43,6 +43,12 @@ updated: 2026-11-19
 - [x] ISC-37: React 与 TanStack Router/Query/Table/Virtual 实际承载导航、只读模块数据和工具列表，直接链接、刷新和历史导航有效；浏览器写操作不由查询重取执行。
 - [x] ISC-38: 最新主线类型、lint、单测、双浏览器扩展构建、SDK、userscript 和相关浏览器回归通过；记录独立桌面和窄屏验收及实际未覆盖项。
 
+### F11 · 在侧栏问多个已打开的网页
+
+- [x] ISC-39: 在现有侧栏用「＋添加标签页」或 `@` 从最近的普通网页中选择最多十个来源；显示并可逐个移除或返回所选来源。用 `/` 选择现有提示词，键盘操作不意外发送。不默认采集任何标签页。
+- [x] ISC-40: 只把显式选择且有权限的标签页正文作为有独立编号的参考材料发送给现有模型服务；限制每页与总量，不保存这批正文到对话历史，无需扩大 manifest 权限。
+- [x] ISC-41: 切换活动标签页不使多页参考失效；来源导航、关闭、撤权、过期或工作区关闭后不可继续使用。既有单页、选文写回、导入和模型设置的行为保持不变。
+
 ## Test Strategy
 
 | Criterion | Kind   | Evidence                   | Expected | Probe                                                                                        | Assay tier |
@@ -52,8 +58,13 @@ updated: 2026-11-19
 | ISC-37    | bash   | 路由、读取、列表与显式动作 | exit 0   | pnpm typecheck && pnpm test:e2e:strict                                                       | literal    |
 | ISC-38    | manual | 自动检查与真实界面验收     | pass     | pnpm verify；pnpm verify:module-sdk；pnpm verify:userscript；desktop/narrow browser captures | literal    |
 
+| ISC-39 | browser | 多页选择、移除、来源跳转、快捷提示词 | pass | e2e/workspace.spec.ts 的跨标签页问答场景 | literal |
+| ISC-40 | bash | 受信任协议、请求体、限额、存储不含来源正文 | exit 0 | `pnpm exec vitest run src/workspace/__tests__/tab-sources.test.ts` | literal |
+| ISC-41 | browser | 导航、撤权与原有单页操作回归 | pass | 跨标签页用例及 workspace 既有用例 | literal |
+
 ## Decisions
 
+- F11 参考为用户首条消息中的 Ask Gemini 侧栏截图和现有 OneWeb UI。扩展保留显式分享，跨页资料临时保存；现有单页、选文、导入、视频和识图各自保留原接口。Google 私有界面、语音/账户服务及通用自动浏览不属于现有助手功能。
 - 2026-11-19：用户原文“拉取最新代码，重新根据最新代码情况来做架构迁移”；此前指定 WXT 与 TanStack，React 已为选定 UI 路径，中途无需询问。
 - 主线已新增21个提交。原本地未提交成果已逐字备份并校验SHA-256，位于 .git/migration-snapshots/2026-11-19T05-42-49-592Z；旧ISA与证据保存在该目录，本轮不把其通过状态当作新主线证据。
 - 参考为最新主线的现有工作台；本轮保留其视觉结构与功能，不进行新视觉方案选择。
@@ -83,6 +94,12 @@ next: 在支持POSIX的环境为最终版本取得factory check/attest；本次�
 - Firefox保留warnings-as-errors；vendor告警需精确解释/处理并重跑，不以构建成功替代验收。
 - 编辑器预览完成后，同一选区的延迟selectionchange不得隐藏显式写回按钮；真正更换选区仍进入新选区操作。保留完整Chromium失败trace，先在旧实现复现重复事件，再验证修复与真实点击写回。
 - 选文排序测试的480px viewport在页面与助手初始化前设置，避免与按规格隐藏工具栏的resize事件交错；保留PS-03专门的真实resize/scroll隐藏检查，排序、键盘、拖动、原文和显式替换断言不放宽。
+
+### F11 · 跨标签页问答验收
+
+acceptance: pass 2026-11-19 F11 隔离扩展工作区，独立 360/1440 px 验收和最终产物复拍见 [跨标签页问答检查点](docs/checkpoints/assistant-tab-sources.md#界面验收)。原生侧栏、首次系统权限弹窗和商业模型未验收。
+
+verification: F11 在未提交的基线 `2e9f5a8` 工作树验证。1,008 项单测、87 项 Chromium 端到端用例及 Firefox 助手 5/5 通过。Chromium 与 Firefox 生产权限声明均与迁移基线一致。独立第三轮源码复评未发现剩余阻断。
 
 ## Articulation Log
 

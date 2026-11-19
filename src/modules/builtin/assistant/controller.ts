@@ -1,7 +1,7 @@
 import type { AssistantAttachment, AssistantMessage, AssistantPrompt, AssistantStorage, Conversation, ProviderConfiguration, PublicProvider, StartInput } from './contracts'
 import { serviceBase } from '../video-dubbing/config'
 import { importSubtitles } from '../video-dubbing/subtitles'
-import { ASSISTANT_SECRET_KEY, ASSISTANT_STORAGE_KEY, byteLength, isRecord } from './contracts'
+import { ASSISTANT_SECRET_KEY, ASSISTANT_STORAGE_KEY, byteLength, isRecord, MAX_TAB_SOURCES, TAB_SOURCE_BYTES } from './contracts'
 import { completeChat } from './provider'
 
 export interface AssistantControllerOptions {
@@ -10,13 +10,14 @@ export interface AssistantControllerOptions {
   permissions: { contains: (_query: { origins: string[] }) => Promise<boolean> }
   fetch?: typeof fetch
   now?: () => number
+  resolveTabSources?: (_tokens: string[], _owner: string) => Promise<AssistantAttachment[]>
   resolveAttachment?: (_token: string, _owner: string) => Promise<AssistantAttachment>
 }
 
 export class AssistantController {
   private configuration: ProviderConfiguration | null = null
   private readonly conversations = new Map<string, Conversation>()
-  private readonly active = new Map<string, { owner: string, conversationId: string, abort: AbortController, answer: AssistantMessage }>()
+  private readonly active = new Map<string, { owner: string, conversationId: string, abort: AbortController, answer: AssistantMessage, sourceTabIds: number[], sourceOrigins: string[] }>()
   private readonly ready: Promise<void>
   private writes = Promise.resolve()
   private starts: Promise<unknown> = Promise.resolve()
@@ -223,6 +224,12 @@ export class AssistantController {
         throw new Error('页面或附件已失效，请重新附加')
       conversation.attachment = structuredClone(attachment)
     }
+    const tokens = input.tabSourceTokens
+    if (tokens !== undefined && (!Array.isArray(tokens) || tokens.length > MAX_TAB_SOURCES
+      || tokens.some(token => typeof token !== 'string' || token.length > 64) || new Set(tokens).size !== tokens.length)) {
+      throw new Error('所选标签页无效')
+    }
+    const sources = tokens?.length ? await this.resolveSources(tokens, owner) : []
     if (input.promptId && !this.prompts.some(prompt => prompt.id === input.promptId))
       throw new Error('提示词已不存在')
     if ((this.ownerEpochs.get(owner) ?? 0) !== epoch)
@@ -240,7 +247,7 @@ export class AssistantController {
     if (!this.historyEnabled)
       this.temporaryConversations.add(conversation.id)
     const abort = new AbortController()
-    this.active.set(requestId, { owner, conversationId: conversation.id, abort, answer: conversation.messages.at(-1)! })
+    this.active.set(requestId, { owner, conversationId: conversation.id, abort, answer: conversation.messages.at(-1)!, sourceTabIds: sources.map(source => source.tabId!), sourceOrigins: [...new Set(sources.flatMap(source => source.url ? [`${new URL(source.url).origin}/*`] : []))] })
     try {
       await this.persist()
     }
@@ -254,7 +261,7 @@ export class AssistantController {
       this.temporaryConversations.delete(conversation.id)
       throw new Error('无法保存本机历史，请清理空间后重试')
     }
-    void this.generate(conversation, input, configuration, abort)
+    void this.generate(conversation, input, configuration, abort, owner)
     return { requestId, conversationId: conversation.id }
   }
 
@@ -281,10 +288,12 @@ export class AssistantController {
     }
   }
 
-  invalidatePage(tabId?: number) {
+  invalidatePage(tabId?: number, includeTabSources = true) {
     for (const [id, pending] of this.active) {
       const attachment = this.conversations.get(pending.conversationId)?.attachment
-      if (attachment && attachment.type !== 'file' && (tabId === undefined || attachment.tabId === tabId))
+      const matchesSingle = attachment && attachment.type !== 'file' && (tabId === undefined || attachment.tabId === tabId)
+      const matchesTabs = includeTabSources && (tabId === undefined ? pending.sourceTabIds.length > 0 : pending.sourceTabIds.includes(tabId))
+      if (matchesSingle || matchesTabs)
         this.cancel(id, pending.owner)
     }
   }
@@ -294,7 +303,12 @@ export class AssistantController {
     if (this.configuration && !await this._options.permissions.contains({ origins: [`${new URL(this.configuration.baseUrl).origin}/*`] })) {
       for (const request of this.active.values())
         this.cancelOwner(request.owner)
+      return
     }
+    await Promise.all([...this.active].map(async ([id, request]) => {
+      if (request.sourceOrigins.length && !await this._options.permissions.contains({ origins: request.sourceOrigins }).catch(() => false))
+        this.cancel(id, request.owner)
+    }))
   }
 
   async usesOriginPattern(pattern: string) {
@@ -321,7 +335,7 @@ export class AssistantController {
     if (signal.aborted)
       abort.abort()
     const answer: AssistantMessage = { id: crypto.randomUUID(), role: 'assistant', text: '', status: 'preparing', favorite: false }
-    this.active.set(answer.id, { owner, conversationId: crypto.randomUUID(), abort, answer })
+    this.active.set(answer.id, { owner, conversationId: crypto.randomUUID(), abort, answer, sourceTabIds: [], sourceOrigins: [] })
     const timeout = setTimeout(() => abort.abort(), 90000)
     try {
       const text = await completeChat(config, [
@@ -485,7 +499,18 @@ export class AssistantController {
     return this._options.now?.() ?? Date.now()
   }
 
-  private async generate(conversation: Conversation, input: StartInput, config: ProviderConfiguration, abort: AbortController) {
+  private async resolveSources(tokens: string[], owner: string) {
+    const sources = await this._options.resolveTabSources?.(tokens, owner)
+    if (!sources || sources.length !== tokens.length || sources.some(source => source.type !== 'page'
+      || source.tabId === undefined || byteLength(source.text) > TAB_SOURCE_BYTES)) {
+      throw new Error('标签页附件已失效，请重新添加')
+    }
+    return sources
+  }
+
+  private async generate(conversation: Conversation, input: StartInput, config: ProviderConfiguration, abort: AbortController, owner: string) {
+    if (abort.signal.aborted)
+      return
     const answer = conversation.messages.at(-1)!
     let timedOut = false
     const timeout = setTimeout(() => {
@@ -493,6 +518,17 @@ export class AssistantController {
       abort.abort()
     }, 90000)
     try {
+      let sources: AssistantAttachment[] = []
+      if (input.tabSourceTokens?.length) {
+        try {
+          // Saving the conversation yielded to browser events. Recheck immediately before provider I/O.
+          sources = await this.resolveSources(input.tabSourceTokens, owner)
+        }
+        catch {
+          throw new Error('模型请求未发送：标签页附件已失效，请移除或重新添加')
+        }
+      }
+      abort.signal.throwIfAborted()
       const language = typeof input.language === 'string' && /^[\w-]{2,32}$/.test(input.language) ? input.language : 'zh-CN'
       const instructions = {
         chat: 'Answer the user clearly and accurately.',
@@ -514,6 +550,11 @@ export class AssistantController {
               content: `Reference material (${conversation.attachment.title}):\n<reference>\n${conversation.attachment.text}\n</reference>`,
             }]
           : []),
+        ...sources.map((source, index) => ({
+          role: 'user',
+          content: `Reference [${index + 1}] (untrusted webpage data):
+${JSON.stringify({ title: source.title, url: source.url, text: source.text, truncated: source.truncated })}`,
+        })),
         ...conversation.messages.filter(message => message !== answer && (message.role === 'user' || message.status === 'completed'))
           .map(message => ({ role: message.role, content: message.text })),
       ]

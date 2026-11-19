@@ -1,11 +1,14 @@
 /* eslint no-template-curly-in-string: off -- Prompt placeholders are literal text, not JavaScript interpolation. */
 import type { AssistantAttachment, AssistantIntent, AssistantPrompt, Conversation, PublicProvider } from '~/modules/builtin/assistant/contracts'
+import { MAX_TAB_SOURCES } from '~/modules/builtin/assistant/contracts'
 import type { AssistantClient } from '~/modules/builtin/assistant/protocol'
 import { serviceBase } from '~/modules/builtin/video-dubbing/config'
 import { dubbingSite } from '~/modules/builtin/video-dubbing/sites'
 import type { PageActionClient, PageAssistantPreferences } from '~/workspace/page-actions'
 import type { PageContextClient, PageTranslationStatus } from '~/workspace/page-context'
+import type { TabSource, TabSourceClient } from '~/workspace/tab-sources'
 import type { VisionConfiguration } from '~/workspace/vision'
+import { createAssistantPicker } from './assistant-picker'
 
 export type AssistantMode = 'assistant' | 'reading' | 'translation' | 'writing' | 'history' | 'favorites' | 'settings'
 export interface AssistantViewOptions {
@@ -17,6 +20,7 @@ export interface AssistantViewOptions {
   readFile?: (_file: File) => Promise<string>
   pageContext?: PageContextClient
   pageActions?: PageActionClient
+  tabSources?: TabSourceClient
 }
 
 export function uiNode<K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = '') {
@@ -36,6 +40,9 @@ export class AssistantView {
   private modelId = ''
   private language = 'zh-CN'
   private attachment: AssistantAttachment | null = null
+  private tabSources: Array<TabSource & { disconnected?: boolean }> = []
+  private attachingTab?: symbol
+  private resettingConversation?: Promise<unknown>
   private requestId: string | null = null
   private feedback = ''
   private disposed = false
@@ -167,8 +174,15 @@ export class AssistantView {
           continue
         const card = uiNode('article', '', 'assistant-history-card')
         const open = this.button(item.title, 'assistant-open-conversation', async () => {
-          this.conversation = await this._options.client.openConversation(item.id)
-          this.attachment = this.conversation.attachment ?? null
+          const generation = this.generation
+          this.attachingTab = undefined
+          this.tabSources = []
+          await this._options.tabSources?.clear()
+          const conversation = await this._options.client.openConversation(item.id)
+          if (this.disposed || generation !== this.generation)
+            return
+          this.conversation = conversation
+          this.attachment = conversation.attachment ?? null
           this.mode = 'assistant'
           this.configuring = false
           this.render()
@@ -571,13 +585,120 @@ export class AssistantView {
     }
     const input = uiNode('textarea')
     input.setAttribute('aria-label', '消息')
-    input.placeholder = '输入问题，或告诉我你想完成什么…'
+    input.placeholder = this._options.tabSources ? '输入问题，@ 添加标签页，/ 选择提示词' : '输入问题，或告诉我你想完成什么…'
     input.value = this.draft
     input.rows = 3
     input.addEventListener('input', () => {
       this.draft = input.value
     })
+    const sourceList = uiNode('div', '', 'assistant-tab-sources')
+    const refreshSources = () => {
+      sourceList.replaceChildren()
+      if (!this.tabSources.length)
+        return
+      sourceList.append(uiNode('p', `已附加 ${this.tabSources.length} 个标签页 · 仅在发送时共享`, 'assistant-source-caption'))
+      for (const [index, source] of this.tabSources.entries()) {
+        const chip = uiNode('div', '', 'assistant-source-chip')
+        const open = this.button(`[${index + 1}] ${source.title}`, 'assistant-tab-source-open', () => this._options.tabSources!.focus(source.token).then(() => {}), 'assistant-source-open')
+        open.setAttribute('aria-label', `返回来源：${source.title}`)
+        open.disabled = source.disconnected ?? false
+        const hint = source.disconnected ? ' · 已失效，请重新添加' : source.truncated ? ' · 正文已截断' : ''
+        chip.append(open, uiNode('small', `${source.url}${hint}`))
+        const remove = this.button('移除', 'assistant-tab-source-remove', async () => {
+          if (!source.disconnected)
+            await this._options.tabSources!.remove(source.token)
+          this.tabSources = this.tabSources.filter(item => item.token !== source.token)
+          refreshSources()
+          input.focus()
+        })
+        remove.setAttribute('aria-label', `移除来源：${source.title}`)
+        chip.append(remove)
+        sourceList.append(chip)
+      }
+      if (!this.draft && !this.requestId) {
+        const task = this.tabSources.length === 1 ? '总结所选网页' : '比较所选网页'
+        sourceList.append(this.button(task, 'assistant-tab-source-suggestion', () => {
+          if (!this.draft) {
+            this.draft = this.tabSources.length === 1 ? '总结所选网页的重点，并标明来源。' : '比较所选网页的共同点和差异，并标明来源。'
+            input.value = this.draft
+            refreshSources()
+          }
+          input.focus()
+        }))
+      }
+    }
+    refreshSources()
+    const picker = createAssistantPicker(input, {
+      listTabs: this._options.tabSources
+        ? async () => {
+          await this.resettingConversation
+          return this._options.tabSources!.list()
+        }
+        : undefined,
+      addTab: async (choice, signal) => {
+        const client = this._options.tabSources!
+        if (this.attachingTab)
+          throw new Error('请等待标签页附加完成')
+        if (this.busy || this.requestId)
+          throw new Error('请等待当前回答完成后再添加标签页')
+        if (this.tabSources.length >= MAX_TAB_SOURCES && !this.tabSources.some(item => item.tabId === choice.tabId))
+          throw new Error(`最多附加 ${MAX_TAB_SOURCES} 个标签页，请先移除一个`)
+        const operation = Symbol('attach tab')
+        this.attachingTab = operation
+        this.message('正在等待标签页授权或读取正文…')
+        try {
+          const authorized = await this._options.permissions.request({ origins: [choice.originPattern] })
+          if (this.disposed || this.attachingTab !== operation)
+            return
+          if (signal.aborted) {
+            this.message('已取消附加标签页')
+            return
+          }
+          if (!authorized)
+            throw new Error('未获得此标签页的站点权限')
+          const source = await client.attach(choice.token)
+          if (this.disposed || signal.aborted || this.attachingTab !== operation) {
+            if (!this.tabSources.some(item => item.token === source.token))
+              await client.remove(source.token).catch(() => {})
+            if (signal.aborted && this.attachingTab === operation)
+              this.message('已取消附加标签页')
+            return
+          }
+          const existing = this.tabSources.findIndex(item => item.tabId === source.tabId)
+          if (existing < 0)
+            this.tabSources.push(source)
+          else
+            this.tabSources[existing] = source
+          this.message('标签页已附加，可以继续添加或发送问题')
+          if (sourceList.isConnected)
+            refreshSources()
+          else
+            this.render()
+        }
+        finally {
+          if (this.attachingTab === operation)
+            this.attachingTab = undefined
+        }
+      },
+      prompts: this.prompts,
+      choosePrompt: (id) => {
+        this.promptId = id
+        prompt.value = id
+        this.message(`已选择提示词：${this.prompts.find(item => item.id === id)?.title ?? ''}`)
+      },
+      changeDraft: (draft) => {
+        this.draft = draft
+        refreshSources()
+      },
+      report: text => this.message(text),
+    })
     input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && event.repeat && !event.shiftKey && !event.isComposing) {
+        event.preventDefault()
+        return
+      }
+      if (picker.key(event))
+        return
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
         event.preventDefault()
         void this.send().catch(error => this.message(this.error(error)))
@@ -620,13 +741,21 @@ export class AssistantView {
         await this.updateAnswer()
       })
       : this.button('发送', 'assistant-send', () => this.send(), 'primary-button'))
-    composer.append(input, actions)
+    composer.append(sourceList, input, picker.controls, picker.panel, actions)
     this.root.append(composer)
   }
 
   private async send(intent?: AssistantIntent) {
     if (this.busy || this.requestId || !this.draft.trim())
       return
+    if (this.attachingTab || this.resettingConversation) {
+      this.message(this.attachingTab ? '请等待标签页授权和正文读取完成' : '请等待新对话准备完成')
+      return
+    }
+    if (this.tabSources.some(source => source.disconnected)) {
+      this.message('请移除或重新添加已失效的网页来源，草稿已保留')
+      return
+    }
     if (!this.configuration?.keyConfigured) {
       this.configuring = true
       this.feedback = '请先配置模型服务，草稿已保留'
@@ -648,6 +777,7 @@ export class AssistantView {
         modelId: this.modelId,
         language: this.language,
         attachmentToken: this.attachment?.token ?? null,
+        ...(this.tabSources.length ? { tabSourceTokens: this.tabSources.map(source => source.token) } : {}),
         promptId: this.promptId || undefined,
       })
       if (this.disposed || generation !== this.generation) {
@@ -684,8 +814,8 @@ export class AssistantView {
   private async updateAnswer() {
     if (this.disposed || !this.conversation)
       return
+    const generation = this.generation
     try {
-      const generation = this.generation
       const id = this.conversation.id
       const conversation = await this._options.client.openConversation(id)
       if (this.disposed || generation !== this.generation || this.conversation?.id !== id)
@@ -705,19 +835,24 @@ export class AssistantView {
       }
     }
     catch (error) {
+      if (this.disposed || generation !== this.generation)
+        return
       this.requestId = null
-      this.message(this.error(error))
+      this.feedback = this.error(error)
+      this.render()
     }
   }
 
   async newConversation() {
-    this.generation++
+    const generation = ++this.generation
     this.busy = false
+    this.attachingTab = undefined
     const requestId = this.requestId
     clearTimeout(this.timer)
     this.requestId = null
     this.conversation = null
     this.attachment = null
+    this.tabSources = []
     this.draft = ''
     this.draftIntent = undefined
     this.feedback = ''
@@ -725,11 +860,24 @@ export class AssistantView {
     const leaveCollection = ['history', 'favorites', 'settings'].includes(this.mode)
     if (leaveCollection)
       this.mode = 'assistant'
+    const previous = this.resettingConversation
+    const reset = (async () => {
+      await previous?.catch(() => {})
+      if (requestId)
+        await this._options.client.cancel(requestId)
+      await this._options.tabSources?.clear()
+      await this._options.client.close()
+    })()
+    this.resettingConversation = reset
     this.render()
-    if (requestId)
-      await this._options.client.cancel(requestId)
-    await this._options.client.close()
-    if (leaveCollection)
+    try {
+      await reset
+    }
+    finally {
+      if (this.resettingConversation === reset)
+        this.resettingConversation = undefined
+    }
+    if (leaveCollection && generation === this.generation)
       await this._options.onConversationOpen?.()
   }
 
@@ -805,6 +953,22 @@ export class AssistantView {
     this.message(error ?? `${{ translating: '正在翻译', completed: '翻译完成', cancelled: '翻译已停止', failed: '翻译失败' }[status]} · ${completed}/${total}${truncated ? ' · 已截断' : ''}`)
     if (status === 'translating')
       this.translationTimer = setTimeout(() => { void this.updateTranslation().catch(error => this.message(this.error(error))) }, 300)
+  }
+
+  connectionLost() {
+    if (this.disposed)
+      return
+    const answer = this.conversation?.messages.at(-1)
+    if (this.requestId && answer?.id === this.requestId && ['preparing', 'streaming'].includes(answer.status))
+      answer.status = 'cancelled'
+    this.generation++
+    clearTimeout(this.timer)
+    this.requestId = null
+    this.busy = false
+    this.attachingTab = undefined
+    this.tabSources = this.tabSources.map(source => ({ ...source, disconnected: true }))
+    this.feedback = this.tabSources.length ? '助手连接已断开，请移除或重新添加网页来源' : '助手连接已断开，请重试'
+    this.render()
   }
 
   dispose() {
