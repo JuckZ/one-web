@@ -112,7 +112,7 @@ describe('module management boundary', () => {
     const extensionBaseUrl = `chrome-extension://${extensionId}/`
     expect(isTrustedModuleManagementSender({
       id: extensionId,
-      url: `${extensionBaseUrl}sidebar/index.html`,
+      url: `${extensionBaseUrl}sidebar.html`,
       tab: { id: 1 },
     }, extensionId, extensionBaseUrl)).toBe(true)
     expect(isTrustedModuleManagementSender({

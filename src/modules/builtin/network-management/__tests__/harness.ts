@@ -57,7 +57,7 @@ export function createNetworkHarness(options: { privacyPermission?: boolean, hos
   }
   const controllerOptions: NetworkControllerOptions = { registry, storage, permissions: system.permissions, privacy: system.privacy, scripting: system.scripting }
   const controller = new NetworkManagementController(controllerOptions)
-  const sender = { id: 'network-test', url: 'chrome-extension://network-test/dist/sidebar/index.html' }
+  const sender = { id: 'network-test', url: 'chrome-extension://network-test/sidebar.html' }
   const transport = { sendMessage: vi.fn(async (message: unknown): Promise<unknown> => handleNetworkManagementMessage(controller, message, sender, 'network-test', 'chrome-extension://network-test/')) }
   const client = new NetworkManagementClient(transport)
   return { client, controller, system, registry, storage, data, transport, controllerOptions, sender }

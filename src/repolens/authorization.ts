@@ -1,4 +1,5 @@
 import type { InstalledModuleRecord } from '~/modules/types'
+import browser from '~/platform/browser'
 
 export async function resolveRepoLensInitFields(
   record: InstalledModuleRecord,

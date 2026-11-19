@@ -7,7 +7,7 @@ test.use({ cookieManagerAccess: true })
 test('Cookie Manager performs reviewed CRUD and JSON round trips in the packaged 420px panel', async ({ context, extensionId }) => {
   const panel = await context.newPage()
   await panel.setViewportSize({ width: 420, height: 1000 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.oneweb.cookie-manager`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html?moduleId=dev.oneweb.cookie-manager`)
   const card = panel.locator('[data-module-id="dev.oneweb.cookie-manager"][data-testid="module-card"]')
   await expect(card).toBeVisible({ timeout: 3000 })
   await expect(card.getByTestId('module-toggle')).toHaveAttribute('aria-checked', 'false')
@@ -88,7 +88,7 @@ test('Cookie Manager performs reviewed CRUD and JSON round trips in the packaged
 
 test('Cookie Manager preserves CHIPS identities and invalidates old snapshots after worker restart', async ({ context, extensionId }) => {
   const panel = await context.newPage()
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.oneweb.cookie-manager`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html?moduleId=dev.oneweb.cookie-manager`)
   const card = panel.locator('[data-module-id="dev.oneweb.cookie-manager"][data-testid="module-card"]')
   await card.getByTestId('module-toggle').click()
   const workspace = card.getByTestId('cookie-manager')

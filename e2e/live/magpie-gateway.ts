@@ -34,7 +34,7 @@ function readMagpieConfiguration(configPath?: string): MagpieConfiguration {
     'if not key and provider.get("requires_openai_auth") and p.with_name("auth.json").exists(): key=json.loads(p.with_name("auth.json").read_text()).get("OPENAI_API_KEY","")',
     'print(json.dumps({"baseUrl":provider.get("base_url"),"model":profile.get("model",c.get("model")),"key":key}))',
   ].join('\n')
-  const result = spawnSync('python3', ['-c', script, filename], { encoding: 'utf8', timeout: 10000, maxBuffer: 256 * 1024 })
+  const result = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-I', '-c', script, filename], { encoding: 'utf8', timeout: 10000, maxBuffer: 256 * 1024 })
   // Do not include subprocess stdout/stderr: parse failures can include secret-bearing config lines.
   if (result.status !== 0 || result.error)
     throw new Error('无法读取 Codex 网关配置（需要 Python 3.11+），请检查 ONEWEB_LIVE_CODEX_CONFIG')
@@ -150,7 +150,7 @@ export async function createMagpieGateway(options: { articleHtml?: string, confi
           credentials: 'omit',
           signal: abort.signal,
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${configuration.key}` },
-          body,
+          body: new Uint8Array(body),
         })
         summary.status = upstream.status
         if (!upstream.ok || !upstream.body) {

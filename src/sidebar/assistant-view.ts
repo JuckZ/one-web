@@ -13,6 +13,7 @@ export interface AssistantViewOptions {
   permissions: { request: (_query: { origins: string[] }) => Promise<boolean> }
   clipboard?: { writeText: (_text: string) => Promise<void> }
   onConversationOpen?: () => void | Promise<void>
+  onDraftReturn?: () => void | Promise<void>
   readFile?: (_file: File) => Promise<string>
   pageContext?: PageContextClient
   pageActions?: PageActionClient
@@ -242,8 +243,14 @@ export class AssistantView {
       this.render()
       await this._options.onConversationOpen?.()
     }, 'primary-button'))
-    form.append(this.button('返回草稿', 'assistant-back', () => {
+    form.append(this.button('返回草稿', 'assistant-back', async () => {
       this.configuring = false
+      if (this.mode === 'settings' && this._options.onDraftReturn) {
+        await this._options.onDraftReturn()
+        return
+      }
+      if (this.mode === 'settings')
+        this.mode = 'assistant'
       this.render()
     }))
     this.root.append(form)

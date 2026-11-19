@@ -31,7 +31,7 @@ async function fixture(handler: RequestListener, local = storage(), permissions 
   const createClient = (target = controller, owner = 'workspace-a') => new AssistantClient({
     sendMessage: async message => handleAssistantMessage(target, message, {
       id: 'test',
-      url: 'chrome-extension://test/dist/sidebar/index.html',
+      url: 'chrome-extension://test/sidebar.html',
       documentId: owner,
     }, 'test', 'chrome-extension://test/'),
   })

@@ -27,6 +27,30 @@ The feature decomposition sequence is tracked in
 The manifest/store privacy source of truth is
 [`docs/privacy-data-inventory.md`](docs/privacy-data-inventory.md).
 
+## 当前技术架构
+
+扩展采用 **WXT + React 19 + TypeScript + TanStack**，同时构建 Chromium 和 Firefox Manifest V3。
+`wxt.config.ts` 与 `src/entrypoints/` 管理扩展入口，`src/manifest.ts` 保留产品身份、权限和沙箱策略；
+Chromium 使用 service worker 与原生 side panel，Firefox 使用后台脚本与原生 sidebar。
+工作台在浏览器内运行，不使用 TanStack Start 或 SSR；宿主无需独立 Web 服务。
+
+- **React / Router**：React 承载工作台导航和应用列表，TanStack Router 使用 hash 路由，例如
+  `sidebar.html#/tools`、`sidebar.html#/module%3Adev.juck.repolens`。根路径恢复已保存位置，
+  宿主校验目标并处理无效或已删除模块。
+- **Query**：当前只通过 `fetchQuery` 读取已安装模块 registry，query key 为 `['workspace', 'modules']`。
+  查询关闭失败重试与窗口聚焦重取；初始化、模块管理回调与 registry 存储事件显式刷新。
+  模型请求、授权、启停、写回和其他浏览器写操作仍由明确用户动作调用有限协议，mutation 默认不重试。
+- **Table / Virtual**：应用列表用 TanStack Table 做名称/描述搜索、类型筛选和名称排序；
+  筛选后超过 50 项才启用 TanStack Virtual，较短列表直接渲染。
+- **业务与隔离**：既有 DOM view、controller 和 protocol 通过稳定 outlet 的 mount/dispose 接入；
+  Assistant、Cookie、网络、视频与远程模块的权限、owner 和取消规则保留在原业务层。
+  `@oneweb/module-sdk` 独立构建，油猴脚本继续使用独立 Vite IIFE 构建。
+
+原 Vue、Element Plus、UnoCSS 演示入口和手写 Vite 扩展多入口已移除。
+具体职责、产物契约及新增功能边界见 [当前架构](docs/architecture.md) 和
+[ADR-0027](docs/adr/0027-wxt-react-tanstack-workspace.md)。本轮检查、失败记录、产物与未覆盖范围见
+[迁移检查点](docs/checkpoints/wxt-react-tanstack-migration.md)，验证结果绑定对应源码与构建。
+
 ## 扩展与油猴脚本
 
 OneWeb 同一仓库维护浏览器扩展和独立页面工具脚本。Page Toolbox 提供密码查看、网页自由编辑、
@@ -187,10 +211,11 @@ pnpm verify:chromium   # 可在另一终端运行：生产构建 + 完整 Chromi
 pnpm verify:firefox    # 独立 Firefox 生产构建、manifest 校验与临时安装验证
 ```
 
-Chromium 开发时加载 `artifacts/dev/chromium/`，页面服务为 `http://localhost:3303/`。
+Chromium 开发时加载 `artifacts/dev/chromium/`，WXT 开发服务为 `http://localhost:3303/`。
 只需要开发构建时使用 `pnpm dev`；Firefox 使用 `pnpm dev-firefox`，加载
-`artifacts/dev/firefox/`，页面服务端口为 3304。内容脚本和后台变更会重新打包，浏览器中需重新加载扩展；
-页面视图使用 Vite 开发服务。
+`artifacts/dev/firefox/`，开发服务端口为 3304。WXT 管理入口 watch 与 React 页面热更新，
+开发配置关闭自动启动浏览器；首次加载及需要时重新加载扩展，由当前隔离测试或手动加载流程负责。
+开发服务只用于开发，生产包不依赖它。
 
 | 用途         | Chromium                                            | Firefox                                           |
 | ------------ | --------------------------------------------------- | ------------------------------------------------- |
@@ -198,8 +223,9 @@ Chromium 开发时加载 `artifacts/dev/chromium/`，页面服务为 `http://loc
 | 具名生产构建 | `pnpm build:chromium` → `artifacts/build/chromium/` | `pnpm build:firefox` → `artifacts/build/firefox/` |
 | 浏览器门禁   | `pnpm verify:chromium` → `artifacts/test/chromium/` | `pnpm verify:firefox` → `artifacts/test/firefox/` |
 
-默认 `pnpm build` 仍写入 `extension/`；`pnpm build:all` 顺序生成 Chromium、Firefox 和 userscript 三种生产构建。
-不同用途的输出互不清理，旧 ZIP/XPI/CRX 保留。同一输出目录只运行一个构建者；
+默认 `pnpm build` 写入 `artifacts/build/chromium/`；`pnpm build:all` 顺序生成 Chromium、Firefox 和 userscript 三种生产构建。
+`ONEWEB_EXTENSION_DIR` 同时供 WXT 输出与产物校验、打包工具选择目标；`pnpm build` 先生成独立 SDK，
+再调用 WXT 构建，最后校验产品身份。不同用途的输出互不清理，旧 ZIP/XPI/CRX 保留。同一输出目录只运行一个构建者；
 `pnpm test:watch`、`pnpm typecheck` 和浏览器测试可在开发期间独立执行。
 Chromium 门禁的 trace 与截图位于 `artifacts/test-results/chromium/`。
 浏览器门禁不依赖失败重试。Linux Firefox 媒体测试会创建并清理测试专用的虚拟音频输出；
@@ -211,7 +237,7 @@ Chromium 远程模块协议验收使用独立本机 fixture 端口 14747；RepoL
 EXTENSION_PATH=artifacts/test/chromium pnpm test:e2e e2e/browser-tasks.spec.ts --retries=0
 ```
 
-Build Chromium and load `extension/` as an unpacked extension:
+Build Chromium and load `artifacts/build/chromium/` as an unpacked extension:
 
 ```bash
 cd /path/to/one-web
@@ -325,7 +351,7 @@ pnpm lint
 pnpm test
 pnpm verify:chromium
 pnpm verify:firefox
-EXTENSION_PATH="$PWD/extension" PW_BROWSER_CHANNEL=msedge PLAYWRIGHT_HTML_OPEN=never pnpm test:e2e
+EXTENSION_PATH="$PWD/artifacts/build/chromium" PW_BROWSER_CHANNEL=msedge PLAYWRIGHT_HTML_OPEN=never pnpm test:e2e --retries=0
 ```
 
 The browser tests load the production extension in disposable profiles. Workspace tests exercise

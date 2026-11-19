@@ -6,6 +6,7 @@ import type { AssistantClient } from '~/modules/builtin/assistant/protocol'
 import type { InstalledModuleRecord } from '~/modules/types'
 import type { PageContextClient } from '~/workspace/page-context'
 import { uiNode as node } from './assistant-view'
+import { mountSmartAppsList, type SmartAppsFilter, type SmartAppsSort } from './smart-apps-list'
 
 export interface SmartAppsViewOptions {
   client: SmartAppsClient
@@ -23,7 +24,9 @@ export class SmartAppsView {
   private apps: SmartApp[] = []
   private modules: InstalledModuleRecord[] = []
   private query = ''
-  private filter: 'all' | 'web-tool' | 'mini-app' = 'all'
+  private filter: SmartAppsFilter = 'all'
+  private sort: SmartAppsSort = 'default'
+  private listView: ReturnType<typeof mountSmartAppsList> | null = null
   private status = node('p', '', 'smart-apps-status')
   private dialog: HTMLDialogElement | null = null
   private runner = new MiniAppRunner()
@@ -60,6 +63,13 @@ export class SmartAppsView {
     this.render()
   }
 
+  // Registry refreshes update list data without reopening a running tool or dialog.
+  updateModules(modules: InstalledModuleRecord[]) {
+    this.modules = modules
+    if (this.mounted)
+      this.populateList()
+  }
+
   private button(label: string, action: () => unknown, className = 'secondary-button') {
     const button = node('button', label, className)
     button.type = 'button'
@@ -84,7 +94,10 @@ export class SmartAppsView {
     if (!this.mounted || generation !== this.generation)
       return
     this.apps = apps
-    this.render()
+    // A mutation may finish after the user has launched an app. Refresh the
+    // library data without replacing that app's runner or in-flight output.
+    if (!this.activeApp)
+      this.render()
   }
 
   async libraryChanged() {
@@ -105,8 +118,50 @@ export class SmartAppsView {
     }
   }
 
+  private listProps() {
+    return {
+      apps: this.apps,
+      modules: this.modules,
+      query: this.query,
+      filter: this.filter,
+      sort: this.sort,
+      openApp: (id: string) => this.launch(id),
+      openModule: (id: string) => this._options.openModule(id),
+      toggleApp: async (id: string, enabled: boolean) => {
+        await this._options.client.setEnabled(id, enabled)
+        await this.reload()
+      },
+      toggleModule: async (id: string, enabled: boolean) => {
+        await this._options.setModuleEnabled(id, enabled)
+        const record = this.modules.find(item => item.manifest.id === id)
+        if (record) {
+          record.enabled = enabled
+          this.modules = [...this.modules]
+        }
+        this.populateList()
+      },
+      editApp: (app: SmartApp) => this.createDialog(app),
+      removeApp: (app: SmartApp) => this.confirmRemove(app),
+      onError: (error: unknown) => this.message(error),
+    }
+  }
+
+  private populateList() {
+    this.listView?.update(this.listProps())
+  }
+
+  private unmountList() {
+    this.listView?.dispose()
+    this.listView = null
+  }
+
   private render() {
-    this.runner.dispose()
+    if (!this.mounted)
+      return
+    if (this.listView) {
+      this.populateList()
+      return
+    }
     this.activeApp = null
     this.activeKind = null
     this.root.replaceChildren()
@@ -123,41 +178,11 @@ export class SmartAppsView {
     search.setAttribute('aria-label', '搜索工具')
     search.value = this.query
     const filters = node('div', '', 'smart-apps-filters')
-    const list = node('div', '', 'smart-apps-list')
+    const list = node('div')
     const populate = () => {
-      list.replaceChildren()
       for (const button of filters.querySelectorAll('button'))
         button.setAttribute('aria-pressed', String(button.dataset.filter === this.filter))
-      const includes = (name: string, description: string) => `${name} ${description}`.toLocaleLowerCase().includes(this.query.toLocaleLowerCase())
-      if (this.filter !== 'web-tool') {
-        for (const record of this.modules.filter(item => includes(item.manifest.name, item.manifest.description))) {
-          const row = this.row(record.manifest.name, record.manifest.description, record.enabled, record.manifest.runtime === 'builtin' ? '内置小应用' : '远程小应用', () => this._options.openModule(record.manifest.id), async () => {
-            const enabled = !record.enabled
-            const control = row.root.querySelector<HTMLButtonElement>('[role="switch"]')!
-            control.disabled = true
-            try {
-              await this._options.setModuleEnabled(record.manifest.id, enabled)
-              record.enabled = enabled
-              populate()
-            }
-            finally { control.disabled = false }
-          })
-          row.open.dataset.openModule = record.manifest.id
-          row.root.dataset.moduleId = record.manifest.id
-          list.append(row.root)
-        }
-      }
-      for (const app of this.apps.filter(item => (this.filter === 'all' || item.kind === this.filter) && includes(item.name, item.description))) {
-        const row = this.row(app.name, app.description, app.enabled, app.kind === 'web-tool' ? '网页标准工具' : '小应用', () => this.launch(app.id), async () => {
-          await this._options.client.setEnabled(app.id, !app.enabled)
-          await this.reload()
-        })
-        row.root.dataset.appId = app.id
-        row.actions.append(this.button('编辑', () => this.createDialog(app)), this.button('删除', () => this.confirmRemove(app)))
-        list.append(row.root)
-      }
-      if (!list.children.length)
-        list.append(node('p', '这里还没有应用。创建一个网页工具，或生成你的第一个小应用。', 'smart-apps-empty'))
+      this.populateList()
     }
     for (const [value, label] of [['all', '全部'], ['web-tool', '网页工具'], ['mini-app', '小应用']] as const) {
       const button = this.button(label, () => {
@@ -171,7 +196,19 @@ export class SmartAppsView {
       this.query = search.value
       populate()
     })
-    toolbar.append(search, filters)
+    const sort = node('select')
+    sort.setAttribute('aria-label', '工具排序')
+    for (const [value, label] of [['default', '原有顺序'], ['name-asc', '名称 A–Z'], ['name-desc', '名称 Z–A']] as const) {
+      const option = node('option', label)
+      option.value = value
+      sort.append(option)
+    }
+    sort.value = this.sort
+    sort.addEventListener('change', () => {
+      this.sort = sort.value as SmartAppsSort
+      populate()
+    })
+    toolbar.append(search, filters, sort)
     const footer = node('div', '', 'smart-apps-footer')
     const file = node('input')
     file.type = 'file'
@@ -203,20 +240,7 @@ export class SmartAppsView {
     }), this.button('模块管理与权限', () => this._options.settings()), file)
     populate()
     this.root.append(heading, toolbar, this.status, list, footer)
-  }
-
-  private row(name: string, description: string, enabled: boolean, kind: string, open: () => unknown, toggle: () => unknown) {
-    const root = node('article', '', 'smart-app-row')
-    const switchButton = this.button('', toggle, 'smart-app-switch')
-    switchButton.setAttribute('role', 'switch')
-    switchButton.setAttribute('aria-checked', String(enabled))
-    switchButton.setAttribute('aria-label', `启用 ${name}`)
-    const openButton = this.button('', open, 'smart-app-open')
-    openButton.append(node('span', name.slice(0, 1), 'smart-app-mark'), node('span', name, 'smart-app-name'), node('span', kind, 'smart-app-kind'), node('small', description))
-    openButton.setAttribute('aria-label', `打开 ${name}`)
-    const actions = node('div', '', 'smart-app-row-actions')
-    root.append(switchButton, openButton, actions)
-    return { root, open: openButton, actions }
+    this.listView = mountSmartAppsList(list, this.listProps())
   }
 
   private showDialog(label: string) {
@@ -228,10 +252,11 @@ export class SmartAppsView {
     top.append(node('h2', label), close)
     dialog.append(top)
     dialog.addEventListener('close', () => {
-      void this.stop()
-      dialog.remove()
-      if (this.dialog === dialog)
+      if (this.dialog === dialog) {
         this.dialog = null
+        void this.stop()
+      }
+      dialog.remove()
     }, { once: true })
     this.root.append(dialog)
     this.dialog = dialog
@@ -401,6 +426,7 @@ export class SmartAppsView {
     this.activeApp = app.id
     this.activeKind = app.kind
     const generation = this.generation
+    this.unmountList()
     this.root.replaceChildren()
     // Internal app navigation shares the library's scroll container. Start a newly opened
     // app at its heading rather than retaining the long management list's scroll position.
@@ -409,6 +435,8 @@ export class SmartAppsView {
     const header = node('header', '', 'smart-apps-heading')
     header.append(node('h1', app.name), this.button('返回应用列表', async () => {
       await this.stop()
+      this.activeApp = null
+      this.activeKind = null
       await this.reload()
     }))
     this.root.append(header, this.status)
@@ -501,6 +529,7 @@ export class SmartAppsView {
     this.dialog?.remove()
     this.dialog = null
     void this.stop()
+    this.unmountList()
     this.root.replaceChildren()
   }
 }

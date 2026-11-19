@@ -102,9 +102,8 @@ async function main() {
     path.join(projectDir, 'pnpm-lock.yaml'),
     path.join(projectDir, 'src/modules/builtin/page-toolbox'),
     path.join(projectDir, 'src/pageToolboxContent'),
-    path.join(projectDir, 'vite.config.page-toolbox.ts'),
-    path.join(extensionRoot, 'manifest.json'),
-    path.join(extensionRoot, 'dist'),
+    path.join(projectDir, 'wxt.config.ts'),
+    extensionRoot,
   ]
   const files = (await Promise.all(targets.map(collectTextFiles))).flat().sort()
   const entries = await Promise.all(files.map(async filePath => ({

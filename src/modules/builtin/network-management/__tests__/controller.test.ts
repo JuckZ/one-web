@@ -55,9 +55,9 @@ describe('network management through its trusted runtime client', () => {
     system.hostPermission = true
     await expect(client.apply(settings)).resolves.toMatchObject({ ok: true, value: { settings, scriptsActive: true, protected: true } })
     expect([...system.registrations.values()]).toEqual([
-      { id: 'oneweb-network-support', js: ['dist/network/support.js'], world: 'MAIN', runAt: 'document_start', allFrames: true, matchOriginAsFallback: true, persistAcrossSessions: true, matches: ['http://*/*', 'https://*/*'] },
-      { id: 'oneweb-network-devices', js: ['dist/network/devices.js'], world: 'MAIN', runAt: 'document_start', allFrames: true, matchOriginAsFallback: true, persistAcrossSessions: true, matches: ['http://*/*', 'https://*/*'] },
-      { id: 'oneweb-network-additional', js: ['dist/network/additional.js'], world: 'MAIN', runAt: 'document_start', allFrames: true, matchOriginAsFallback: true, persistAcrossSessions: true, matches: ['http://*/*', 'https://*/*'] },
+      { id: 'oneweb-network-support', js: ['network-support.js'], world: 'MAIN', runAt: 'document_start', allFrames: true, matchOriginAsFallback: true, persistAcrossSessions: true, matches: ['http://*/*', 'https://*/*'] },
+      { id: 'oneweb-network-devices', js: ['network-devices.js'], world: 'MAIN', runAt: 'document_start', allFrames: true, matchOriginAsFallback: true, persistAcrossSessions: true, matches: ['http://*/*', 'https://*/*'] },
+      { id: 'oneweb-network-additional', js: ['network-additional.js'], world: 'MAIN', runAt: 'document_start', allFrames: true, matchOriginAsFallback: true, persistAcrossSessions: true, matches: ['http://*/*', 'https://*/*'] },
     ])
     expect(controller.usesOriginPattern('https://example.com/*')).toBe(true)
     expect(controller.usesOriginPattern('file:///*')).toBe(false)

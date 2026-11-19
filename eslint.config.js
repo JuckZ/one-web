@@ -7,8 +7,8 @@ export default antfu(
     //   tsconfigPath: 'tsconfig.json',
     // },
     typescript: true,
-    unocss: true,
-    vue: true,
+    react: true,
+    vue: false,
     // customize the stylistic rules
     stylistic: {
       indent: 2, // 4, or 'tab'
@@ -53,16 +53,19 @@ export default antfu(
       '**/package.json/**',
       'tsconfig.json',
       '**/tsconfig.json/**',
-      // Legacy Vitesse demo pages are intentionally excluded from the RepoLens-only build.
-      'src/contentScripts/views/**',
-      'src/devtools/**',
-      'src/home/**',
-      'src/logic/**',
-      'src/popup/**',
+      '.wxt/**',
+      '.output/**',
+      '.playwright-cli/**',
+      '.migration-backup/**',
     ],
   },
   {
-    files: ['**/*.{js,jsx,ts,tsx,vue}'],
+    // Playwright's fixture callback `use` is not a React hook.
+    files: ['e2e/**/*.ts'],
+    rules: { 'react-hooks/rules-of-hooks': 'off' },
+  },
+  {
+    files: ['**/*.{js,jsx,ts,tsx}'],
     rules: {
       '@typescript-eslint/no-unused-vars': [
         'warn',

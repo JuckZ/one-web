@@ -1,3 +1,4 @@
+import { QueryClient } from '@tanstack/react-query'
 import type { AssistantStorage } from '~/modules/builtin/assistant/contracts'
 import { isRecord } from '~/modules/builtin/assistant/contracts'
 import type { InstalledModuleRecord } from '~/modules/types'
@@ -15,17 +16,35 @@ export interface WorkspaceSnapshot {
 const STORAGE_KEY = 'oneweb.workspace.v1'
 
 export class WorkspaceController {
+  readonly queries = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false }, mutations: { retry: false } } })
   private state: WorkspaceSnapshot = { destination: 'assistant', favorites: [], recent: [], modules: [], note: '' }
   private readonly listeners = new Set<(_state: WorkspaceSnapshot) => void>()
   private writes = Promise.resolve()
   private initialized = false
+  private refreshes = Promise.resolve()
+  private disposed = false
 
   constructor(private readonly _options: { storage: AssistantStorage, listModules: () => Promise<InstalledModuleRecord[]> }) {}
 
-  async initialize() {
-    const modules = await this._options.listModules()
+  initialize() {
+    // A registry event during a read must perform a subsequent fresh query.
+    this.refreshes = this.refreshes.catch(() => {}).then(() => this.refreshModules()).catch((error) => {
+      if (!this.disposed)
+        throw error
+    })
+    return this.refreshes
+  }
+
+  private async refreshModules() {
+    if (this.disposed)
+      return
+    const modules = await this.queries.fetchQuery({ queryKey: ['workspace', 'modules'], queryFn: this._options.listModules, staleTime: 0 })
+    if (this.disposed)
+      return
     if (!this.initialized) {
       const stored = (await this._options.storage.get(STORAGE_KEY))[STORAGE_KEY]
+      if (this.disposed)
+        return
       if (isRecord(stored) && stored.version === 1) {
         if (this.validDestination(stored.destination))
           this.state.destination = stored.destination
@@ -91,116 +110,11 @@ export class WorkspaceController {
   }
 
   private emit() { for (const listener of this.listeners) listener(this.snapshot()) }
-  dispose() { this.listeners.clear() }
-}
-
-function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = '') {
-  const node = document.createElement(tag)
-  node.textContent = text
-  node.className = className
-  return node
-}
-
-export class WorkspaceView {
-  readonly outlet = element('section', '', 'workspace-outlet')
-  private readonly nav = element('nav', '', 'workspace-nav')
-  private readonly note = element('p', '', 'workspace-note')
-  private unsubscribe: () => void
-  private query = ''
-  private toolsRenderer?: (_outlet: HTMLElement, _state: WorkspaceSnapshot) => void
-
-  constructor(readonly root: HTMLElement, private readonly _controller: WorkspaceController) {
-    this.nav.setAttribute('aria-label', '工作区导航')
-    this.note.setAttribute('role', 'status')
-    root.classList.add('workspace-layout')
-    root.append(this.nav, this.outlet, this.note)
-    this.unsubscribe = _controller.subscribe(state => this.render(state))
-  }
-
-  async initialize() { await this._controller.initialize() }
-
-  setToolsRenderer(render: (_outlet: HTMLElement, _state: WorkspaceSnapshot) => void) { this.toolsRenderer = render }
-
-  private action(button: HTMLButtonElement, operation: () => Promise<unknown>) {
-    button.type = 'button'
-    button.addEventListener('click', () => {
-      void operation().catch((error) => {
-        this.note.textContent = error instanceof Error ? error.message : '操作失败'
-      })
-    })
-    return button
-  }
-
-  private render(state: WorkspaceSnapshot) {
-    this.nav.replaceChildren()
-    const labels = ['助手', '阅读', '翻译', '写作', '工具', '历史', '收藏', '设置']
-    const marks = ['✳', '▤', '文', '✎', '▦', '◷', '☆', '⚙']
-    destinations.forEach((destination, index) => {
-      const button = this.action(element('button', '', 'workspace-nav-button'), () => this._controller.open(destination))
-      button.dataset.destination = destination
-      button.setAttribute('aria-label', labels[index])
-      button.setAttribute('aria-current', state.destination === destination ? 'page' : 'false')
-      const icon = element('span', marks[index], 'workspace-nav-icon')
-      icon.setAttribute('aria-hidden', 'true')
-      button.append(icon, element('span', labels[index], 'workspace-nav-label'))
-      this.nav.append(button)
-    })
-    this.note.textContent = state.note
-    this.note.hidden = !state.note
-    if (state.destination === 'tools') {
-      if (this.toolsRenderer)
-        this.toolsRenderer(this.outlet, state)
-      else
-        this.renderTools(state)
-    }
-    else if (this.outlet.dataset.surface === 'tools') {
-      this.outlet.replaceChildren()
-    }
-    this.outlet.dataset.surface = state.destination
-  }
-
-  private renderTools(state: WorkspaceSnapshot) {
-    this.outlet.replaceChildren()
-    const header = element('header', '', 'workspace-page-heading')
-    header.append(element('span', 'YOUR BROWSER, CONNECTED', 'workspace-eyebrow'), element('h1', '随手可用的工具'), element('p', '管理网页、整理资源，把重复的工作交给 OneWeb。'))
-    const search = element('input', '', 'workspace-search')
-    search.type = 'search'
-    search.placeholder = '搜索工具…'
-    search.setAttribute('aria-label', '搜索工具')
-    search.value = this.query
-    const list = element('div', '', 'workspace-tool-grid')
-    const populate = () => {
-      list.replaceChildren()
-      const records = [...state.modules].sort((a, b) => {
-        const rank = (id: string) => state.favorites.includes(id) ? -100 : state.recent.includes(id) ? state.recent.indexOf(id) - 20 : 0
-        return rank(a.manifest.id) - rank(b.manifest.id)
-      }).filter(record => `${record.manifest.name} ${record.manifest.description}`.toLocaleLowerCase().includes(this.query.toLocaleLowerCase()))
-      for (const record of records) {
-        const { id, name, description } = record.manifest
-        const card = element('article', '', 'workspace-tool-card')
-        const favorite = state.favorites.includes(id)
-        const star = this.action(element('button', favorite ? '★' : '☆', 'workspace-tool-star'), () => this._controller.favorite(id))
-        star.setAttribute('aria-label', `${favorite ? '取消收藏' : '收藏'} ${name}`)
-        star.setAttribute('aria-pressed', String(favorite))
-        const open = this.action(element('button', '', 'workspace-tool-open'), () => this._controller.open(`module:${id}`))
-        open.dataset.openModule = id
-        open.append(element('span', name.slice(0, 1), 'workspace-tool-mark'), element('h2', name), element('p', description), element('span', record.enabled ? '打开工具 ↗' : '已停用 · 查看并启用', 'workspace-tool-state'))
-        card.append(star, open)
-        list.append(card)
-      }
-      if (!records.length)
-        list.append(element('p', '没有匹配的工具。'))
-    }
-    search.addEventListener('input', () => {
-      this.query = search.value
-      populate()
-    })
-    populate()
-    this.outlet.append(header, search, list)
-  }
-
   dispose() {
-    this.unsubscribe()
-    this.root.replaceChildren()
+    this.disposed = true
+    this.listeners.clear()
+    this.queries.clear()
   }
 }
+
+export { WorkspaceView } from './workspace-view'

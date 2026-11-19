@@ -15,7 +15,7 @@ export interface BrowserActionEntryOptions {
   }
 }
 
-export const ONEWEB_FALLBACK_PAGE = '/dist/sidebar/index.html'
+export const ONEWEB_FALLBACK_PAGE = '/sidebar.html'
 
 export function configureChromiumActionEntry(options: BrowserActionEntryOptions) {
   let fallbackInstalled = false

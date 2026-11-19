@@ -60,7 +60,7 @@ describe('firefox Page Toolbox gate helpers', () => {
       manifest_version: 3,
       optional_host_permissions: ['https://*/*', 'http://*/*'],
       permissions: ['activeTab', 'contextMenus', 'scripting', 'storage', 'tabs'],
-      sidebar_action: { default_panel: 'dist/sidebar/index.html' },
+      sidebar_action: { default_panel: 'sidebar.html' },
     }
     expect(validateFirefoxArtifactManifest(manifest)).toBe(true)
     expect(() => validateFirefoxArtifactManifest({ ...manifest, side_panel: {} })).toThrow('production sidebar boundary')
@@ -70,7 +70,7 @@ describe('firefox Page Toolbox gate helpers', () => {
   it('targets only the explicit child process group and escalates cleanup deterministically', async () => {
     const kill = vi.fn()
     const wait = vi.fn(async () => {})
-    await expect(terminateProcessGroup(417, kill, wait)).resolves.toEqual(['SIGTERM', 'SIGKILL'])
+    await expect(terminateProcessGroup(417, kill, wait, 'linux')).resolves.toEqual(['SIGTERM', 'SIGKILL'])
     expect(kill.mock.calls).toEqual([[-417, 'SIGTERM'], [-417, 'SIGKILL']])
     expect(wait).toHaveBeenCalledWith(750)
 
@@ -79,7 +79,7 @@ describe('firefox Page Toolbox gate helpers', () => {
       error.code = 'ESRCH'
       throw error
     })
-    await expect(terminateProcessGroup(418, missing, wait)).resolves.toEqual([])
+    await expect(terminateProcessGroup(418, missing, wait, 'linux')).resolves.toEqual([])
     await expect(terminateProcessGroup(undefined, kill, wait)).resolves.toEqual([])
   })
 })

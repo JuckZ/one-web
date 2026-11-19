@@ -1,8 +1,53 @@
-# OneWeb Architecture Roadmap
+# OneWeb Architecture
 
-RepoLens is now a packaged builtin, alongside a separate library of page prompt tools and isolated
+The current extension uses WXT, React and TanStack over the existing TypeScript business controllers
+and finite protocols. The migration is based on `34ce32b057da492c8f8e4addc0856d632c1eb4ca` and is
+recorded in [ADR-0027](adr/0027-wxt-react-tanstack-workspace.md). This page describes the current
+implementation; historical checkpoints retain their original source and verification scope.
+
+RepoLens is a packaged builtin, alongside a separate library of page prompt tools and isolated
 HTML mini apps ([ADR-0024](adr/0024-smart-apps-and-packaged-repolens.md)). The module model, trust boundaries, manifest format and evolution
 plan are specified in [`module-platform-architecture.md`](module-platform-architecture.md).
+
+## WXT build and entrypoints
+
+`wxt.config.ts` owns extension discovery and the React integration, with explicit imports and
+Manifest V3 for both browser targets. `src/manifest.ts` supplies product identity, browser-specific
+sidebars, permissions and CSP; WXT discovers and emits the background and GitHub content-script
+entries. Chromium uses a module service worker and `side_panel`; Firefox uses background scripts and
+`sidebar_action`. `__FIREFOX__` selects platform branches at build time. Chrome 148 and Firefox 142
+remain the minimum declared versions.
+
+| Source                                                       | Packaged entry                                                      | Runtime boundary                                                          |
+| ------------------------------------------------------------ | ------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `src/entrypoints/background.ts`                              | `background.js`                                                     | Privileged host controllers and finite runtime protocols                  |
+| `src/entrypoints/github.content.ts`                          | `content-scripts/github.js`                                         | Passive GitHub repository identity observer, top frame at `document_idle` |
+| `src/entrypoints/sidebar.html` → `src/sidebar/main.ts`       | `sidebar.html`                                                      | Shared native panel and full-tab workspace                                |
+| `public/sandbox.html` + `src/entrypoints/sandbox-runtime.ts` | `sandbox.html` + `sandbox-runtime.js`                               | Manifest sandbox with a classic loader and closed nested HTML-app frame   |
+| `src/entrypoints/assistant.ts`                               | `assistant.js`                                                      | Fixed page context, selection and browser-task runtime                    |
+| `src/entrypoints/page-toolbox.ts`                            | `page-toolbox.js`                                                   | Fixed Page Toolbox runtime                                                |
+| `src/entrypoints/video-dubbing.ts`                           | `video-dubbing.js`                                                  | Fixed isolated player runtime                                             |
+| `src/entrypoints/network-{support,devices,additional}.ts`    | `network-support.js`, `network-devices.js`, `network-additional.js` | Fixed WebRTC page guards registered in MAIN at `document_start`           |
+
+The unlisted scripts are bundled local programs, not automatically injected by WXT. Existing host
+controllers decide when to inject or register them after their permission and lifecycle checks.
+Untrusted modules cannot select scripts or paths. The manifest sandbox, its classic loader, all fixed
+injectors and packaged-page sender validation must use the same emitted paths. Generated shared
+chunk and CSS names are implementation details, not protocol identifiers. `public/assets/` supplies
+packaged icons. The former Vue/Element Plus/UnoCSS demo pages and per-entry Vite extension configs
+have been removed; the independent userscript Vite target remains.
+
+`pnpm build` builds the SDK, invokes WXT through `scripts/build-extension.ts`, then verifies product
+identity. Its default output is `artifacts/build/chromium/`. Explicit production builds use
+`artifacts/build/{chromium,firefox}/`, development uses `artifacts/dev/{chromium,firefox}/`, and browser
+gates use `artifacts/test/{chromium,firefox}/`. `ONEWEB_EXTENSION_DIR` selects the output consistently
+for WXT and artifact tools. WXT development servers use ports 3303/3304 and do not launch a browser
+automatically. See [development commands](../README.md#同时开发与测试) for isolated builds and tests.
+
+`packages/module-sdk/` keeps its independent TypeScript build, exports and package verification.
+`src/userscript/` keeps its independent Vite IIFE target under `artifacts/build/userscript/` and
+GM-based adapters. Neither target acquires a dependency on the React workspace or WXT host runtime.
+There is no TanStack Start, SSR, server route or production development-server dependency.
 
 ## Unified workspace and assistant
 
@@ -12,12 +57,40 @@ plan are specified in [`module-platform-architecture.md`](module-platform-archit
 采用可选 privacy 权限、浏览器实际策略读回及固定 MAIN/document_start 脚本；
 不向远程模块增加能力。决策见 [ADR-0023](adr/0023-network-management-webrtc.md)。
 
-`src/workspace/workspace.ts` owns destination selection, tool search, favorites and recent tools.
+`src/workspace/workspace.ts` owns validated destinations, favorites, recent tools and the workspace
+snapshot. `src/workspace/workspace-view.tsx` renders React navigation, subscribes to that snapshot
+with `useSyncExternalStore`, and uses TanStack Router's hash history for destinations such as
+`sidebar.html#/tools` and `sidebar.html#/module%3Adev.juck.repolens`. The root route restores the saved
+destination; invalid destinations and removed modules are checked by the controller. The existing
+`moduleId` and one-use `handoff` query parameters remain host inputs, not arbitrary execution routes.
+An explicit hash takes precedence over `moduleId`; the host consumes and removes that entry query before
+Router initialization. Returning from settings navigates to the destination visited in the current page
+and preserves its draft/attachments. A cold settings entry defaults to the assistant; a destination read
+from persistence during initialization does not become its return target.
+
+Each workspace controller owns a TanStack Query client. Its current query is the read-only
+`['workspace', 'modules']` registry fetch, with `staleTime: 0`, `retry: false` and
+`refetchOnWindowFocus: false`. Initialization, module management callbacks and registry storage events
+explicitly invoke that read. The Query client is not the registry source of truth and is cleared on
+disposal. It does not cache credentials, model generation, authorization or browser writes. Mutation
+retries default to false; existing user actions continue to call their finite clients directly.
+The smart-app library still reads through `SmartAppsClient`, not a second Query-backed store.
+
+`src/sidebar/smart-apps-list.tsx` merges builtin/remote module records and user app definitions using
+stable `module:` / `app:` row identities. TanStack Table performs name/description search, app-kind
+filtering and optional ascending/descending name sorting. TanStack Virtual is enabled only when the
+filtered result contains more than 50 rows; smaller lists render ordinary accessible list items.
+`SmartAppsView` retains the toolbar, dialogs, imports, model generation and `MiniAppRunner`; its
+separate React list root updates props without cancelling a running task or reopening a dialog.
+Launch/disposal explicitly unmount the list, and the view can be opened again.
+
 `src/sidebar/main.ts` mounts a shared `AssistantView`, a selected builtin tool or a remote
-`ModuleFrameHost` into its stable outlet. The default is Assistant; an explicit `moduleId` query
-still opens a particular tool. Settings contains provider/preferences and module lifecycle
-management. Daily builtin views are mounted only at their selected tool entry, with disposal
-guards preventing old asynchronous refreshes from rendering after navigation.
+`ModuleFrameHost` into the stable outlet created by `WorkspaceView`. React owns the navigation and
+list subtrees; the host owns business-view mount/dispose, lifecycle ports and frame sessions.
+Settings contains provider/preferences and module lifecycle management. Daily builtin views are
+mounted only at their selected tool entry, with disposal guards preventing old asynchronous
+refreshes from rendering after navigation. Moving to React does not replace the background owners,
+permission checks, bounded payloads, cancellation epochs or remote-module protocol.
 
 `src/modules/builtin/assistant/` owns compatible provider configuration, keys, request ownership,
 stream parsing, local history, prompts and bounded text/subtitle import. Its finite
@@ -39,7 +112,7 @@ back the request without contacting the provider.
 tab, native document, source URL and a ten-minute lifetime. Full-tab workspaces may use the last
 ordinary web tab as a source. A caller cannot supply a tab, frame, arbitrary URL or script.
 `page-injection.ts` shares document-targeted sessions for the fixed
-`dist/assistantContent/index.global.js` artifact. The isolated runtime extracts visible article
+`assistant.js` artifact. The isolated runtime extracts visible article
 text, freezes editor selections and inserts owned translation nodes without rewriting original
 HTML. Explicit writeback rechecks the original node, text and selection. Each answer records
 the attachment token used to generate it, so changing attachments cannot redirect an old answer.
@@ -182,7 +255,7 @@ translation/TTS requests. Its builtin seed is disabled. `src/sidebar/video-dubbi
 is mounted independently at its tool entry; no remote-module capability is introduced.
 
 The background classifies the active tab as YouTube, Bilibili or an import-only HTML5 page and injects the fixed
-`dist/videoDubbing/index.global.js` artifact only after explicit site authorization. A fixed
+`video-dubbing.js` artifact only after explicit site authorization. A fixed
 MAIN reader returns bounded player identity and caption metadata. The isolated player can
 observe native same-video timedtext resource URLs via PerformanceObserver, allowing native CC
 requests to refresh a matching track without network monkey-patching or a webRequest grant.
@@ -224,22 +297,39 @@ media-source replacement stops playback; rebinding clears the previously importe
 Site permission cleanup consults the existing shared-origin coordinator so another builtin's overlapping
 grant remains available. See [Video Dubbing SDD](specs/video-dubbing.md).
 
-## Target stack
+## Current stack and feature boundaries
 
-- **Manifest V3 first**, with Firefox compatibility isolated behind manifest generation branches.
-- **Vue 3 + Vite + TypeScript** for extension pages, background/service worker, content scripts, and DevTools surfaces.
-- **Strict TypeScript** with bundler module resolution, isolated modules, modern ES targets, and incremental type checking.
-- **Vitest + Vue Test Utils + V8 coverage** for unit/component tests.
-- **Playwright extension E2E** for Chromium smoke tests against the built `extension/` directory.
-- **GitHub Actions quality gates** for install, typecheck, lint, coverage, build, artifact upload, and optional store publishing.
+- **WXT + React 19 + TypeScript** for the Manifest V3 extension, with React navigation/list roots
+  and retained DOM business views. WXT uses Vite internally; it owns the extension entry graph.
+- **TanStack Router / Query / Table / Virtual** for hash navigation, the read-only module registry
+  fetch, application filtering/sorting and lists with more than 50 filtered rows. TanStack Start
+  and SSR are not part of this application.
+- **Strict TypeScript** and explicit imports; the platform browser adapter remains the common native
+  API boundary rather than implicit Vue/browser auto-imports.
+- **Vitest + jsdom + V8 coverage** for deterministic controller, protocol and view behavior;
+  **Playwright and the Firefox verification runner** load isolated production extension builds.
+- **Independent module SDK and userscript builds**, plus existing CI, identity, packaging and
+  release verification. A successful old checkpoint does not establish a migrated build's result.
 
 ## Architecture principles
 
 1. Keep privileged extension logic in background modules and expose narrow message contracts to pages/content scripts.
 2. Treat manifest permissions as product surface area: prefer optional permissions and explicit user activation for sensitive APIs.
 3. Keep content scripts idempotent so repeated injection cannot mount duplicated UI or listeners.
-4. Keep build configs DRY by sharing Vite defaults and using small entry-specific configs only for output shape.
-5. Run typecheck, lint, coverage, and build in CI before producing extension artifacts.
+4. Add extension entries through WXT and synchronize fixed injectors, trusted-page allowlists,
+   manifest sandbox paths and artifact tests whenever an emitted path changes.
+5. Keep React-owned subtrees separate from the stable business outlet. Any future view conversion
+   must preserve its owner, cancel/dispose and permission lifecycle before replacing the adapter.
+6. Use Query only for bounded reads. Keep permission prompts and model/browser writes behind
+   explicit user actions; query retry, focus or route initialization must not replay them.
+7. Add browser-bound tasks according to root `AGENTS.md`: capture context, act in place and explicitly
+   write back or return to the source. General chat platforms, complex editors, knowledge management
+   and cross-application orchestration remain external products, not new workspace responsibilities.
+8. New privileged behavior needs its finite controller/protocol, permissions and data inventory.
+   Installed remote modules remain sandboxed web apps; a React component or WXT entry is not a grant
+   of browser authority. No general script/fetch proxy is introduced.
+9. Run checks against the actual source and production artifacts, recording platform and service
+   gaps separately. Build, browser fixture and real-provider evidence establish different claims.
 
 Clash Control follows the same trust split. Phase 4A selected a packaged builtin connector through
 [`ADR-0001`](adr/0001-clash-control-packaged-builtin.md): the trusted background alone can attach a

@@ -119,7 +119,7 @@ interface StorageModuleFixtureBrowserApi {
 async function openManagementPanel(context: BrowserContext, extensionId: string) {
   const panel = await context.newPage()
   await panel.setViewportSize({ width: 420, height: 900 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await panel.locator('[data-destination="settings"]').click()
   await expect(panel.getByTestId('module-manager')).toBeVisible()
   return panel
@@ -230,18 +230,18 @@ async function clearStorageFixture(frame: FrameLocator, expectedRevision: string
 test('built artifact exposes a least-privilege RepoLens side panel', async ({ extensionId }) => {
   const manifest = await import(`${extensionPath}/manifest.json`, { with: { type: 'json' } }).then(module => module.default)
   expect(extensionId).toMatch(/^[a-p]{32}$/)
-  expect(manifest.side_panel.default_path).toBe('dist/sidebar/index.html')
+  expect(manifest.side_panel.default_path).toBe('sidebar.html')
   expect(manifest.permissions).toEqual(['activeTab', 'contextMenus', 'scripting', 'storage', 'tabs', 'sidePanel'])
   expect(manifest.optional_permissions).toEqual(['bookmarks', 'cookies', 'privacy'])
   expect(manifest.optional_host_permissions).toEqual(['https://*/*', 'http://*/*'])
   expect(manifest.host_permissions).toEqual(['https://github.com/*'])
-  expect(manifest.sandbox.pages).toEqual(['dist/apps/sandbox.html'])
+  expect(manifest.sandbox.pages).toEqual(['sandbox.html'])
   expect(manifest.content_security_policy.sandbox).toContain('connect-src \'none\'')
   expect(manifest.content_security_policy.sandbox).toContain('default-src \'none\'')
   expect(manifest.content_security_policy.extension_pages).not.toContain('\'unsafe-eval\'')
   expect(manifest.content_scripts[0].matches).toEqual(['https://github.com/*'])
   expect(JSON.stringify(manifest.content_scripts)).not.toContain('pageToolbox')
-  const toolboxRuntime = fs.readFileSync(`${extensionPath}/dist/pageToolbox/index.global.js`, 'utf8')
+  const toolboxRuntime = fs.readFileSync(`${extensionPath}/page-toolbox.js`, 'utf8')
   expect(toolboxRuntime).toContain('oneweb.page-toolbox.lifecycle.v3')
   for (const forbidden of [
     'executeScript',
@@ -1548,10 +1548,10 @@ test('GitHub SPA context reaches the 420px panel through the generic module host
       consoleProblems.push(`panel: ${message.text()}`)
   })
   await panel.setViewportSize({ width: 420, height: 900 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await panel.getByTestId('manage-modules').click()
   await installFixtureModule(panel, repolensReferenceManifestUrl, repolensReferenceId)
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=${repolensReferenceId}`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html?moduleId=${repolensReferenceId}`)
   await page.bringToFront()
 
   await expect(panel.locator('.brand div span')).toHaveText('vuejs/core', { timeout: 15_000 })
@@ -1671,7 +1671,7 @@ test('GitHub SPA context reaches the 420px panel through the generic module host
 
 test('typed capability client and dispatcher complete result, cancel and stable error across iframe reload', async ({ context, extensionId }) => {
   const panel = await context.newPage()
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   const before = await panel.evaluate(async () => ({
     permissions: await chrome.permissions.getAll(),
     storage: await chrome.storage.local.get(null),
@@ -1943,7 +1943,7 @@ test('storage.module keeps CAS documents, lifecycle and two installed namespaces
     const panel = await context.newPage()
     panel.on('console', message => consoleMessages.push(message.text()))
     await panel.goto(
-      `chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=${encodeURIComponent(moduleId)}`,
+      `chrome-extension://${extensionId}/sidebar.html?moduleId=${encodeURIComponent(moduleId)}`,
     )
     await expect(panel.locator('.bridge-state')).toHaveAttribute('data-ready', 'true', { timeout: 15_000 })
     const frame = panel.frameLocator('[data-testid="oneweb-module-frame"]')
@@ -2090,6 +2090,47 @@ test('storage.module keeps CAS documents, lifecycle and two installed namespaces
   const secondaryAfterRevocation = await readStoredModule(manager, moduleFixtures.secondary.manifest.id)
   expect(secondaryAfterRevocation).toMatchObject({ grantedCapabilities: [], manifest: { capabilities: [] } })
 
+  // Observe the real SDK read without intercepting or replying to the runtime
+  // message. The same native request must succeed before session removal.
+  await manager.evaluate((moduleId) => {
+    const probe = globalThis as typeof globalThis & { __storageRemovalRead?: unknown }
+    delete probe.__storageRemovalRead
+    const observe = (message: unknown, sender: chrome.runtime.MessageSender) => {
+      if (sender.id !== chrome.runtime.id || !message || typeof message !== 'object')
+        return
+      const candidate = message as Record<string, unknown>
+      const binding = candidate.binding
+      const request = candidate.request
+      if (candidate.channel !== 'oneweb.storage-module' || candidate.version !== 1
+        || candidate.type !== 'STORAGE_MODULE_EXECUTE'
+        || !binding || typeof binding !== 'object' || !('moduleId' in binding) || binding.moduleId !== moduleId
+        || !request || typeof request !== 'object' || !('operation' in request) || request.operation !== 'read') {
+        return
+      }
+      probe.__storageRemovalRead = structuredClone(message)
+      chrome.runtime.onMessage.removeListener(observe)
+    }
+    chrome.runtime.onMessage.addListener(observe)
+  }, moduleFixtures.storagePeer.manifest.id)
+  expect(await readStorageFixture(peerSurface.frame)).toMatchObject({ ok: true, result: { document: peerDocument } })
+  const oldPeerReadRequest = await manager.evaluate(() => (
+    globalThis as typeof globalThis & { __storageRemovalRead?: unknown }
+  ).__storageRemovalRead)
+  expect(oldPeerReadRequest).toMatchObject({
+    channel: 'oneweb.storage-module',
+    version: 1,
+    type: 'STORAGE_MODULE_EXECUTE',
+    binding: { moduleId: moduleFixtures.storagePeer.manifest.id },
+    request: { operation: 'read' },
+  })
+  const replayPeerRead = () => manager.evaluate(request => chrome.runtime.sendMessage(request), oldPeerReadRequest)
+  expect(await replayPeerRead()).toMatchObject({
+    channel: 'oneweb.storage-module',
+    version: 1,
+    type: 'STORAGE_MODULE_RESPONSE',
+    requestType: 'STORAGE_MODULE_EXECUTE',
+    result: { ok: true, result: { document: peerDocument } },
+  })
   const peerCard = manager.locator(
     `[data-testid="module-card"][data-module-id="${moduleFixtures.storagePeer.manifest.id}"]`,
   )
@@ -2097,7 +2138,16 @@ test('storage.module keeps CAS documents, lifecycle and two installed namespaces
   await expect(manager.getByTestId('remove-module-dialog')).toBeVisible()
   await manager.locator('[data-confirm-remove]').click()
   await expect(peerCard).toHaveCount(0)
-  expect(await readStorageFixture(peerSurface.frame)).toEqual({ ok: false, code: 'SESSION_DESTROYED' })
+  await expect(peerSurface.panel).toHaveURL(url => url.hash === '#/assistant')
+  await expect(peerSurface.panel.getByTestId('oneweb-module-frame')).toHaveCount(0)
+  await expect(peerSurface.panel.getByText('此前的工具已不存在，已返回助手。')).toBeVisible()
+  expect(await replayPeerRead()).toEqual({
+    channel: 'oneweb.storage-module',
+    version: 1,
+    type: 'STORAGE_MODULE_RESPONSE',
+    requestType: 'STORAGE_MODULE_EXECUTE',
+    result: { ok: false, code: 'SESSION_DESTROYED' },
+  })
   expect(await readStoredModule(manager, moduleFixtures.secondary.manifest.id)).toEqual(secondaryAfterRevocation)
 
   const remoteStorageAfterRemoval = await manager.evaluate(async () => {
@@ -2137,7 +2187,7 @@ test('module management protects seeds and applies lifecycle changes through the
   await page.goto('https://github.com/vuejs/core', { waitUntil: 'domcontentloaded' })
   const panel = await context.newPage()
   await panel.setViewportSize({ width: 420, height: 900 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.juck.repolens`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html?moduleId=dev.juck.repolens`)
   await page.bringToFront()
   await expect(panel.getByTestId('repolens-workspace')).toBeVisible({ timeout: 15_000 })
 
@@ -2433,7 +2483,7 @@ test('cancelling a reviewed remote module releases its origin without persisting
   await page.goto('https://github.com/vuejs/core', { waitUntil: 'domcontentloaded' })
   const panel = await context.newPage()
   await panel.setViewportSize({ width: 420, height: 900 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await panel.getByTestId('manage-modules').click()
   await expect(panel.getByTestId('module-manager')).toBeVisible()
 
@@ -2463,7 +2513,7 @@ test('remote module installation supports narrower grants and persists only afte
   await page.goto('https://github.com/vuejs/core', { waitUntil: 'domcontentloaded' })
   const panel = await context.newPage()
   await panel.setViewportSize({ width: 420, height: 900 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await panel.getByTestId('manage-modules').click()
   await expect(panel.getByTestId('module-manager')).toBeVisible()
 
@@ -2905,7 +2955,7 @@ test('Clash Control passes the complete principal, permission and secret isolati
   expect(consoleMessages.join('\n')).not.toContain(clashControllerFixture.secret)
 
   const remotePanel = await context.newPage()
-  await remotePanel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=${moduleFixtures.primary.manifest.id}`)
+  await remotePanel.goto(`chrome-extension://${extensionId}/sidebar.html?moduleId=${moduleFixtures.primary.manifest.id}`)
   const remoteFrame = remotePanel.frameLocator('[data-testid="oneweb-module-frame"]')
   expect(await remoteFrame.locator('body').evaluate((_body, secret) => ({
     hasExtensionRuntime: Boolean(globalThis.chrome?.runtime),

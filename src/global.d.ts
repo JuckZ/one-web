@@ -8,8 +8,3 @@ declare const __FIREFOX__: boolean
 declare const __NAME__: string
 /** Exact RepoLens origin fixed into the extension at build time. */
 declare const __REPOLENS_ORIGIN__: string
-
-declare module '*.vue' {
-  const component: any
-  export default component
-}

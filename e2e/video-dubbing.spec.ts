@@ -228,7 +228,7 @@ async function prepareDubbing(
   const site = await context.newPage()
   await site.goto(`${origin}${platform === 'bilibili' ? '/video/BV1xx411c7mD/?p=2' : platform === 'html5' ? '/lesson/one' : '/watch?v=fixture'}`)
   const panel = await context.newPage()
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.oneweb.video-dubbing`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html?moduleId=dev.oneweb.video-dubbing`)
   const card = panel.locator('[data-module-id="dev.oneweb.video-dubbing"][data-testid="module-card"]')
   await expect(card).toBeVisible()
   await card.getByTestId('module-toggle').click()

@@ -74,7 +74,7 @@ async function createApp(panel: Page, kind: '网页标准工具' | '小应用', 
 test('page tools capture only on explicit run, render model text and persist independent enable state', async ({ context, extensionId, appFixture }) => {
   const panel = await context.newPage()
   await panel.setViewportSize({ width: 360, height: 900 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await configureProvider(panel, appFixture.origin)
   const dialog = await createApp(panel, '网页标准工具', '网页要点')
   await dialog.getByRole('textbox', { name: '描述', exact: true }).fill('提取当前网页或选文的要点')
@@ -125,8 +125,27 @@ test('AI mini apps run interactively in an opaque sandbox, export locally and im
     await route.abort()
   })
   const panel = await context.newPage()
+  // Observe completion of the real async registry listener, not just storage.set.
+  // The probe exists only in this disposable test page and never enters the app.
+  await panel.addInitScript(() => {
+    if (window.top !== window || !globalThis.chrome?.storage)
+      return
+    const probe = window as typeof window & { registryRefreshes?: number }
+    probe.registryRefreshes = 0
+    const addListener = chrome.storage.onChanged.addListener.bind(chrome.storage.onChanged)
+    chrome.storage.onChanged.addListener = (listener) => {
+      addListener((changes, area) => {
+        const result: unknown = (listener as (..._args: unknown[]) => unknown)(changes, area)
+        if (area === 'local' && changes['oneweb.modules.v1'] && result instanceof Promise) {
+          void result.then(() => {
+            probe.registryRefreshes!++
+          })
+        }
+      })
+    }
+  })
   await panel.setViewportSize({ width: 1100, height: 900 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await configureProvider(panel, appFixture.origin)
   const dialog = await createApp(panel, '小应用', '计数器')
   await dialog.getByRole('textbox', { name: '描述你想创建的应用', exact: true }).fill('一个可以点击增加数值的计数器')
@@ -149,6 +168,20 @@ test('AI mini apps run interactively in an opaque sandbox, export locally and im
   await app.getByRole('button', { name: '增加', exact: true }).click()
   await app.getByRole('button', { name: '增加', exact: true }).click()
   await expect(app.locator('#count')).toHaveText('2')
+  // An unrelated module registry change must not reopen tools or reset the sandbox.
+  const refreshesBefore = await panel.evaluate(() => (window as typeof window & { registryRefreshes: number }).registryRefreshes)
+  await panel.evaluate(async () => {
+    const key = 'oneweb.modules.v1'
+    const stored = await chrome.storage.local.get(key)
+    const records = stored[key] as Array<{ manifest: { id: string }, enabled: boolean }>
+    const record = records.find(item => item.manifest.id === 'dev.oneweb.cookie-manager')!
+    record.enabled = !record.enabled
+    await chrome.storage.local.set({ [key]: records })
+  })
+  await expect.poll(() => panel.evaluate(() => (window as typeof window & { registryRefreshes: number }).registryRefreshes)).toBeGreaterThan(refreshesBefore)
+  await expect(app.locator('#count')).toHaveText('2')
+  await app.getByRole('button', { name: '增加', exact: true }).click()
+  await expect(app.locator('#count')).toHaveText('3')
   await expect(app.locator('#runtime')).toHaveText('false')
   await expect(app.locator('#parent-access')).toHaveText('blocked')
   await expect(app.locator('#network')).toHaveText('blocked')
@@ -180,3 +213,63 @@ test('AI mini apps run interactively in an opaque sandbox, export locally and im
   await expect(rows).toHaveCount(1)
   await expect(rows.getByRole('switch')).toHaveAttribute('aria-checked', 'true')
 })
+
+for (const width of [1440, 420]) {
+  test(`tool list keeps filtering, sorting, toggles and virtual scrolling responsive at ${width}px`, async ({ context, extensionId, appFixture }) => {
+    const panel = await context.newPage()
+    await panel.setViewportSize({ width, height: 900 })
+    await panel.goto(`chrome-extension://${extensionId}/sidebar.html#/tools`)
+    const apps = Array.from({ length: 50 }, (_, index) => ({
+      id: `app-fixture-${index}`,
+      name: `测试工具 ${String(index).padStart(2, '0')}`,
+      description: `列表回归 ${index}`,
+      kind: index === 0 ? 'mini-app' : 'web-tool',
+      ...(index === 0 ? { html: counterMarkup } : { prompt: '整理当前选文' }),
+      enabled: false,
+      matches: ['https://*/*'],
+      createdAt: 1,
+      updatedAt: 1,
+    }))
+    await panel.getByLabel('导入应用文件').setInputFiles({
+      name: 'list-fixture.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify({ version: 1, apps })),
+    })
+    await expect(panel.getByRole('status')).toContainText('已导入 50 个应用')
+    const list = panel.getByRole('list', { name: '应用与工具列表' })
+    await expect(list).toHaveClass(/smart-apps-list-virtual/)
+    const total = Number(await list.getByRole('listitem').first().getAttribute('aria-setsize'))
+    expect(total).toBeGreaterThan(50)
+    expect(await list.getByRole('listitem').count()).toBeLessThan(total)
+    await list.evaluate((node) => {
+      node.scrollTop = node.scrollHeight
+    })
+    await expect(panel.getByRole('button', { name: '打开 测试工具 49', exact: true })).toBeVisible()
+
+    const search = panel.getByRole('searchbox', { name: '搜索工具' })
+    for (const text of ['Page', 'Page Toolbox', '测试工具 49']) {
+      await search.fill(text)
+      await expect(search).toHaveValue(text)
+      await expect(list.getByRole('listitem')).toHaveCount(1)
+    }
+    await panel.getByLabel('工具排序', { exact: true }).selectOption('name-desc')
+    const enabled = panel.getByRole('switch', { name: '启用 测试工具 49', exact: true })
+    await enabled.click()
+    await expect(enabled).toHaveAttribute('aria-checked', 'true')
+    await enabled.click()
+    await expect(enabled).toHaveAttribute('aria-checked', 'false')
+    await search.fill('测试工具')
+    await expect(list.getByRole('listitem')).toHaveCount(50)
+    await expect(list.getByRole('listitem').first()).toContainText('测试工具 49')
+    await panel.getByRole('button', { name: '网页工具', exact: true }).click()
+    await expect(list.getByRole('listitem')).toHaveCount(49)
+    await panel.getByRole('button', { name: '小应用', exact: true }).click()
+    await expect(list.getByRole('listitem')).toHaveCount(1)
+    await expect(list).toContainText('测试工具 00')
+    await panel.locator('[data-destination="settings"]').click()
+    await panel.locator('[data-destination="tools"]').click()
+    await expect(search).toBeEditable()
+    expect(appFixture.requests).toHaveLength(0)
+    expect(await panel.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  })
+}

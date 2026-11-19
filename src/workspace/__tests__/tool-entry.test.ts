@@ -1,3 +1,4 @@
+import markup from '~/entrypoints/sidebar.html?raw'
 import { CookieManagerController } from '~/modules/builtin/cookie-manager/controller'
 import { createCookieManagerSeed } from '~/modules/builtin/cookie-manager/manifest'
 import { CookieManagerClient, handleCookieManagerMessage } from '~/modules/builtin/cookie-manager/protocol'
@@ -5,7 +6,6 @@ import { ModuleManagementClient } from '~/modules/management-client'
 import { ModuleManager } from '~/modules/manager'
 import { ModuleRegistry } from '~/modules/registry'
 import { createRepoLensSeed } from '~/modules/seeds/repolens'
-import markup from '~/sidebar/index.html?raw'
 import { ModuleManagementView } from '~/sidebar/module-management-view'
 
 async function toolFixture() {
@@ -41,7 +41,7 @@ async function toolFixture() {
         sendMessage: async message => handleCookieManagerMessage(
           cookies,
           message,
-          { id: 'test', url: 'chrome-extension://test/dist/sidebar/index.html' },
+          { id: 'test', url: 'chrome-extension://test/sidebar.html' },
           'test',
           'chrome-extension://test/',
         ),

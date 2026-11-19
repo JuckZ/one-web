@@ -16,7 +16,7 @@ export class MiniAppRunner {
       throw new Error('小应用内容为空或超过大小限制')
     const url = new URL(options.sandboxUrl)
     if (!['chrome-extension:', 'moz-extension:'].includes(url.protocol) || !url.hostname
-      || url.pathname !== '/dist/apps/sandbox.html' || url.search || url.hash) {
+      || url.pathname !== '/sandbox.html' || url.search || url.hash) {
       throw new Error('小应用必须使用 OneWeb 打包的隔离运行页')
     }
     const token = crypto.randomUUID()

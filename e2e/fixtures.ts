@@ -31,7 +31,7 @@ const sdkRuntimeFiles = new Set([
   'storage-module.js',
 ])
 
-export const extensionPath = path.resolve(process.env.EXTENSION_PATH || process.env.ONEWEB_EXTENSION_DIR || path.join(currentDir, '../extension'))
+export const extensionPath = path.resolve(process.env.EXTENSION_PATH || process.env.ONEWEB_EXTENSION_DIR || path.join(currentDir, '../artifacts/build/chromium'))
 const fixtureOrigin = process.env.REPOLENS_ORIGIN || 'http://127.0.0.1:14747'
 if (!fixtureOrigin || !/^http:\/\/127\.0\.0\.1:\d+$/.test(fixtureOrigin))
   throw new Error('Chromium E2E requires REPOLENS_ORIGIN with an isolated loopback fixture origin')
@@ -967,73 +967,102 @@ export const test = base.extend<ExtensionFixtures>({
   networkManagementAccess: [false, { option: true }],
   context: async ({ alistFixture, bookmarkProbeFixture, clashControllerFixture, cookieManagerAccess, networkManagementAccess, extraHostOrigins, headless, moduleFixtures, openListFixture }, use) => {
     const closeRepoLensFixture = await startRepoLensFixture(moduleFixtures)
-    const profileDir = await fs.mkdtemp(path.join(os.tmpdir(), 'oneweb-e2e-'))
-    let loadedExtensionPath = extensionPath
-    if (extraHostOrigins.includes('<all_urls>')) {
-      // Headless cannot click the browser toolbar to grant activeTab. Only the
-      // disposable pixel-pipeline fixture declares capture access; production
-      // source/manifest and the user's installed extension are never changed.
-      loadedExtensionPath = path.join(profileDir, 'capture-extension')
+    let profileDir: string | undefined
+    let bootstrap: BrowserContext | undefined
+    let context: BrowserContext | undefined
+    try {
+      profileDir = await fs.mkdtemp(path.join(os.tmpdir(), 'oneweb-e2e-'))
+      const fixtureOrigins = Object.values(moduleFixtures)
+        .map(fixture => `${new URL(fixture.manifestUrl).origin}/*`)
+      fixtureOrigins.push(`${repolensFixtureOrigin}/*`, `${bookmarkProbeFixture.origin}/*`)
+      fixtureOrigins.push(`${clashControllerFixture.origin}/*`)
+      fixtureOrigins.push(`${openListFixture.origin}/*`)
+      fixtureOrigins.push(`${alistFixture.origin}/*`, ...extraHostOrigins)
+      if (cookieManagerAccess || networkManagementAccess)
+        fixtureOrigins.push('http://*/*', 'https://*/*')
+      const expectedPermissions = {
+        permissions: [
+          'bookmarks',
+          ...(cookieManagerAccess ? ['cookies'] : []),
+          ...(networkManagementAccess ? ['privacy'] : []),
+        ],
+        origins: [...new Set(fixtureOrigins)],
+      }
+      // Headless cannot accept optional-permission prompts in browser chrome.
+      // Bootstrap a disposable copy so Chromium records its own valid grants;
+      // never edit protected Preferences or change the production artifact.
+      const loadedExtensionPath = path.join(profileDir, 'extension')
       await fs.copy(extensionPath, loadedExtensionPath)
       const manifestPath = path.join(loadedExtensionPath, 'manifest.json')
-      const manifest = await fs.readJson(manifestPath)
-      manifest.host_permissions = [...new Set([...(manifest.host_permissions ?? []), '<all_urls>'])]
-      await fs.writeJson(manifestPath, manifest)
-    }
-    const browserChannel = process.env.PW_BROWSER_CHANNEL || 'chromium'
-    const launchOptions = {
-      headless,
-      channel: browserChannel,
-      args: [
-        `--disable-extensions-except=${loadedExtensionPath}`,
-        `--load-extension=${loadedExtensionPath}`,
-      ],
-    }
-    const bootstrap = await chromium.launchPersistentContext(profileDir, launchOptions)
-    let [bootstrapWorker] = bootstrap.serviceWorkers()
-    if (!bootstrapWorker)
-      bootstrapWorker = await bootstrap.waitForEvent('serviceworker')
-    const extensionId = new URL(bootstrapWorker.url()).hostname
-    await bootstrap.close()
-
-    const preferencesPath = path.join(profileDir, 'Default', 'Preferences')
-    const preferences = await fs.readJson(preferencesPath)
-    const extensionSettings = preferences.extensions.settings[extensionId]
-    // Chromium's optional-host prompt is browser chrome and cannot be accepted in
-    // headless E2E. Pre-grant only these ephemeral local origins in the isolated
-    // profile; unit tests still verify the exact user-gesture request itself.
-    const fixtureOrigins = Object.values(moduleFixtures)
-      .map(fixture => `${new URL(fixture.manifestUrl).origin}/*`)
-    fixtureOrigins.push(`${repolensFixtureOrigin}/*`, `${bookmarkProbeFixture.origin}/*`)
-    fixtureOrigins.push(`${clashControllerFixture.origin}/*`)
-    fixtureOrigins.push(`${openListFixture.origin}/*`)
-    fixtureOrigins.push(`${alistFixture.origin}/*`, ...extraHostOrigins)
-    if (cookieManagerAccess || networkManagementAccess)
-      fixtureOrigins.push('http://*/*', 'https://*/*')
-    for (const key of ['active_permissions', 'granted_permissions']) {
-      const origins = extensionSettings[key].explicit_host as string[]
-      for (const fixtureOrigin of fixtureOrigins) {
-        if (!origins.includes(fixtureOrigin))
-          origins.push(fixtureOrigin)
+      const finalManifest = await fs.readJson(manifestPath) as Manifest.WebExtensionManifest
+      if (extraHostOrigins.includes('<all_urls>')) {
+        // Only this pixel-pipeline fixture substitutes for a toolbar activeTab grant.
+        finalManifest.host_permissions = [...new Set([...(finalManifest.host_permissions ?? []), '<all_urls>'])]
       }
-      const api = extensionSettings[key].api as string[]
-      if (!api.includes('bookmarks'))
-        api.push('bookmarks')
-      if (cookieManagerAccess && !api.includes('cookies'))
-        api.push('cookies')
-      if (networkManagementAccess && !api.includes('privacy'))
-        api.push('privacy')
-    }
-    await fs.writeJson(preferencesPath, preferences)
+      const bootstrapManifest = structuredClone(finalManifest)
+      bootstrapManifest.permissions = [...new Set([...(bootstrapManifest.permissions ?? []), ...expectedPermissions.permissions])]
+      bootstrapManifest.host_permissions = [...new Set([...(bootstrapManifest.host_permissions ?? []), ...expectedPermissions.origins])]
+      bootstrapManifest.optional_permissions = bootstrapManifest.optional_permissions?.filter(permission => !bootstrapManifest.permissions!.includes(permission))
+      bootstrapManifest.optional_host_permissions = bootstrapManifest.optional_host_permissions?.filter(origin => !bootstrapManifest.host_permissions!.includes(origin))
+      await fs.writeJson(manifestPath, bootstrapManifest)
+      const browserChannel = process.env.PW_BROWSER_CHANNEL || 'chromium'
+      const launchOptions = {
+        headless,
+        channel: browserChannel,
+        args: [
+          `--disable-extensions-except=${loadedExtensionPath}`,
+          `--load-extension=${loadedExtensionPath}`,
+        ],
+      }
+      bootstrap = await chromium.launchPersistentContext(profileDir, launchOptions)
+      let [bootstrapWorker] = bootstrap.serviceWorkers()
+      if (!bootstrapWorker)
+        bootstrapWorker = await bootstrap.waitForEvent('serviceworker')
+      const extensionId = new URL(bootstrapWorker.url()).hostname
+      await bootstrap.close()
+      bootstrap = undefined
+      await fs.writeJson(manifestPath, finalManifest)
 
-    const context = await chromium.launchPersistentContext(profileDir, launchOptions)
-    try {
+      context = await chromium.launchPersistentContext(profileDir, launchOptions)
+      let [worker] = context.serviceWorkers()
+      if (!worker)
+        worker = await context.waitForEvent('serviceworker')
+      const readback = await worker.evaluate(async (expected) => {
+        return {
+          id: chrome.runtime.id,
+          granted: await chrome.permissions.contains(expected),
+          actual: await chrome.permissions.getAll(),
+          manifest: chrome.runtime.getManifest(),
+        }
+      }, expectedPermissions)
+      if (readback.id !== extensionId || !readback.granted)
+        throw new Error(`Disposable Chromium permission setup failed: ${JSON.stringify({ expected: expectedPermissions, actual: readback.actual, id: readback.id })}`)
+      if (JSON.stringify(readback.manifest.permissions) !== JSON.stringify(finalManifest.permissions)
+        || JSON.stringify(readback.manifest.host_permissions) !== JSON.stringify(finalManifest.host_permissions)
+        || JSON.stringify(readback.manifest.optional_permissions) !== JSON.stringify(finalManifest.optional_permissions)
+        || JSON.stringify(readback.manifest.optional_host_permissions) !== JSON.stringify(finalManifest.optional_host_permissions)) {
+        throw new Error('Disposable Chromium did not reload the original manifest permission boundary')
+      }
       await use(context)
     }
     finally {
-      await context.close()
-      await fs.remove(profileDir)
-      await closeRepoLensFixture()
+      try {
+        await context?.close()
+      }
+      finally {
+        try {
+          await bootstrap?.close()
+        }
+        finally {
+          try {
+            if (profileDir)
+              await fs.remove(profileDir)
+          }
+          finally {
+            await closeRepoLensFixture()
+          }
+        }
+      }
     }
   },
   // Playwright requires fixture dependency arguments to use object destructuring.

@@ -52,10 +52,74 @@ const test = base.extend<{ assistantFixture: { origin: string, requests: Array<R
   extraHostOrigins: async ({ assistantFixture }, use) => { await use([`${assistantFixture.origin}/*`]) },
 })
 
+test('workspace hash routes support direct links, reload, history and invalid-target recovery', async ({ context, extensionId }) => {
+  const panel = await context.newPage()
+  const url = `chrome-extension://${extensionId}/sidebar.html`
+  await panel.goto(`${url}#/tools`)
+  await expect(panel.getByRole('searchbox', { name: '搜索工具' })).toBeVisible()
+  await panel.locator('[data-open-module="dev.oneweb.cookie-manager"]').click()
+  await expect(panel.getByRole('heading', { name: 'Cookie Manager', exact: true })).toBeVisible()
+  await expect(panel).toHaveURL(/#\/module(%3A|:)dev.oneweb.cookie-manager$/)
+  await panel.reload()
+  await expect(panel.getByRole('heading', { name: 'Cookie Manager', exact: true })).toBeVisible()
+  await panel.goBack()
+  await expect(panel.getByRole('searchbox', { name: '搜索工具' })).toBeVisible()
+  await panel.goForward()
+  await expect(panel.getByRole('heading', { name: 'Cookie Manager', exact: true })).toBeVisible()
+  await panel.goto(`${url}#/module:missing.module`)
+  await expect(panel.getByRole('heading', { name: 'Cookie Manager', exact: true })).toBeVisible()
+  await expect(panel).toHaveURL(/#\/module(%3A|:)dev.oneweb.cookie-manager$/)
+  await panel.goto(`${url}#/unrecognized`)
+  await expect(panel.getByRole('heading', { name: 'Cookie Manager', exact: true })).toBeVisible()
+  await expect(panel).toHaveURL(/#\/module(%3A|:)dev.oneweb.cookie-manager$/)
+})
+
+test('moduleId entry is consumed before later hash navigation and reload', async ({ context, extensionId }) => {
+  const panel = await context.newPage()
+  const url = `chrome-extension://${extensionId}/sidebar.html`
+  await panel.goto(`${url}?moduleId=dev.oneweb.cookie-manager`)
+  await expect(panel.getByRole('heading', { name: 'Cookie Manager', exact: true })).toBeVisible()
+  await panel.locator('[data-destination="settings"]').click()
+  await expect(panel).toHaveURL(/#\/settings$/)
+  await panel.reload()
+  await expect(panel.locator('[data-destination="settings"]')).toHaveAttribute('aria-current', 'page')
+  await expect(panel).not.toHaveURL(/moduleId=/)
+  await panel.goto(`${url}?moduleId=removed.module#/writing`)
+  await expect(panel.locator('[data-destination="writing"]')).toHaveAttribute('aria-current', 'page')
+  await expect(panel).not.toHaveURL(/moduleId=/)
+})
+
+test('returning from settings restores the previous route, draft and navigation state', async ({ context, extensionId, assistantFixture }) => {
+  const panel = await context.newPage()
+  const url = `chrome-extension://${extensionId}/sidebar.html`
+  await panel.goto(`${url}#/reading`)
+  await panel.getByRole('textbox', { name: '消息', exact: true }).fill('保留这份阅读草稿')
+  await panel.locator('[data-destination="settings"]').click()
+  await expect(panel).toHaveURL(/#\/settings$/)
+  await panel.getByTestId('assistant-back').click()
+  await expect(panel).toHaveURL(/#\/reading$/)
+  await expect(panel.locator('[data-destination="reading"]')).toHaveAttribute('aria-current', 'page')
+  await expect(panel.getByRole('heading', { name: '阅读与理解', exact: true })).toBeVisible()
+  await expect(panel.getByRole('textbox', { name: '消息', exact: true })).toHaveValue('保留这份阅读草稿')
+  await panel.reload()
+  await expect(panel.getByRole('heading', { name: '阅读与理解', exact: true })).toBeVisible()
+  await panel.locator('[data-destination="tools"]').click()
+  await panel.locator('[data-destination="settings"]').click()
+  await panel.getByTestId('assistant-back').click()
+  await expect(panel).toHaveURL(/#\/tools$/)
+  await expect(panel.getByRole('searchbox', { name: '搜索工具' })).toBeVisible()
+  const directSettings = await context.newPage()
+  await directSettings.goto(`${url}#/settings`)
+  await directSettings.getByTestId('assistant-back').click()
+  await expect(directSettings).toHaveURL(/#\/assistant$/)
+  await expect(directSettings.getByRole('heading', { name: '有什么想一起完成的？', exact: true })).toBeVisible()
+  expect(assistantFixture.requests).toHaveLength(0)
+})
+
 test('workspace configures, streams safely and restores history alongside direct tools', async ({ context, extensionId, assistantFixture }) => {
   const panel = await context.newPage()
   await panel.setViewportSize({ width: 360, height: 900 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await expect(panel.getByTestId('assistant-workspace')).toBeVisible({ timeout: 10000 })
   await expect(panel.getByRole('heading', { name: '有什么想一起完成的？' })).toBeVisible()
   await panel.screenshot({ path: 'test-results/oneweb-workspace-360.png' })
@@ -91,7 +155,7 @@ test('workspace configures, streams safely and restores history alongside direct
 
 test('workspace reads an explicit page, previews editor results and recovers bilingual translations', async ({ context, extensionId, assistantFixture }) => {
   const panel = await context.newPage()
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await panel.locator('[data-destination="settings"]').click()
   await panel.getByRole('textbox', { name: '服务地址', exact: true }).fill(`${assistantFixture.origin}/v1/`)
   await panel.getByRole('textbox', { name: '模型（每行一个）', exact: true }).fill('fixture-model')
@@ -145,7 +209,7 @@ test('workspace reads an explicit page, previews editor results and recovers bil
 
 test('authorized page assistant freezes selection, previews an action and respects site hiding', async ({ context, extensionId, assistantFixture }) => {
   const panel = await context.newPage()
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await panel.locator('[data-destination="settings"]').click()
   await panel.getByRole('textbox', { name: '服务地址', exact: true }).fill(`${assistantFixture.origin}/v1/`)
   await panel.getByRole('textbox', { name: '模型（每行一个）', exact: true }).fill('fixture-model')
@@ -189,7 +253,7 @@ test('authorized page assistant freezes selection, previews an action and respec
 
 async function openPageAssistant(context: import('@playwright/test').BrowserContext, extensionId: string, origin: string, viewport?: { width: number, height: number }) {
   const panel = await context.newPage()
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await panel.locator('[data-destination="settings"]').click()
   await panel.getByRole('textbox', { name: '服务地址', exact: true }).fill(`${origin}/v1/`)
   await panel.getByRole('textbox', { name: '模型（每行一个）', exact: true }).fill('fixture-model')
@@ -383,8 +447,8 @@ test('selection action picker pins real actions, changes translation language an
 })
 
 test('selection actions reorder with keyboard and drag while preserving explicit editor replacement (PC-02, PC-04)', async ({ context, extensionId, assistantFixture }, testInfo) => {
-  const { site } = await openPageAssistant(context, extensionId, assistantFixture.origin)
-  await site.setViewportSize({ width: 480, height: 720 })
+  const { site } = await openPageAssistant(context, extensionId, assistantFixture.origin, { width: 480, height: 720 })
+  // Resize dismisses selection controls; establish the viewport before injecting the assistant.
   const editor = site.locator('textarea')
   const selectWord = async () => {
     await editor.focus()
@@ -601,7 +665,7 @@ test('page summaries and custom page actions ignore an unrelated stale editor se
 
 test('permission revocation stops partial output and removes page UI while preserving readable history', async ({ context, extensionId, assistantFixture }) => {
   const panel = await context.newPage()
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await panel.locator('[data-destination="settings"]').click()
   await panel.getByRole('textbox', { name: '服务地址', exact: true }).fill(`${assistantFixture.origin}/v1/`)
   await panel.getByRole('textbox', { name: '模型（每行一个）', exact: true }).fill('fixture-model')
@@ -641,7 +705,7 @@ test('permission revocation stops partial output and removes page UI while prese
 
 test('closing a workspace disconnects its owner and retains a cancelled partial answer', async ({ context, extensionId, assistantFixture }) => {
   const panel = await context.newPage()
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await panel.locator('[data-destination="settings"]').click()
   await panel.getByRole('textbox', { name: '服务地址', exact: true }).fill(`${assistantFixture.origin}/v1/`)
   await panel.getByRole('textbox', { name: '模型（每行一个）', exact: true }).fill('fixture-model')
@@ -652,7 +716,7 @@ test('closing a workspace disconnects its owner and retains a cancelled partial 
   await expect(panel.locator('.assistant-message-text').last()).toHaveText('确定的')
   await panel.close()
   const reopened = await context.newPage()
-  await reopened.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await reopened.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await reopened.locator('[data-destination="history"]').click()
   await reopened.getByRole('button', { name: '打开对话 保持生成' }).click()
   await expect(reopened.getByTestId('assistant-retry')).toBeVisible()
@@ -667,7 +731,7 @@ test('closing a workspace disconnects its owner and retains a cancelled partial 
 
 test('keyboard activation of an editable selection action preserves the editor for explicit replacement', async ({ context, extensionId, assistantFixture }) => {
   const panel = await context.newPage()
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await panel.locator('[data-destination="settings"]').click()
   await panel.getByRole('textbox', { name: '服务地址', exact: true }).fill(`${assistantFixture.origin}/v1/`)
   await panel.getByRole('textbox', { name: '模型（每行一个）', exact: true }).fill('fixture-model')

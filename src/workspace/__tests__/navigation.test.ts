@@ -2,6 +2,12 @@ import { createCookieManagerSeed } from '~/modules/builtin/cookie-manager/manife
 import { ModuleRegistry } from '~/modules/registry'
 import { WorkspaceController, WorkspaceView } from '../workspace'
 
+beforeEach(() => {
+  vi.stubGlobal('scrollTo', vi.fn())
+  history.replaceState(null, '', '/')
+})
+afterEach(() => vi.unstubAllGlobals())
+
 it('navigates to a builtin from searchable tools, preserves favorites and falls back when that module disappears', async () => {
   const values: Record<string, unknown> = {}
   const storage = {

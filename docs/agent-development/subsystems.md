@@ -14,8 +14,12 @@
 | 视频配音、字幕来源、播放器、TTS、翻译服务                           | `docs/specs/video-dubbing.md`；`docs/checkpoints/video-dubbing-release-validation.md` 及本轮对应平台 / 服务 checkpoint                                             | `src/modules/builtin/video-dubbing/`；content player；`e2e/video-dubbing.spec.ts`。fixture、真实平台、云服务、主观音质各自验收。      |
 | 网络管理、WebRTC、Clash                                             | `docs/specs/network-management.md`；`docs/adr/0023-network-management-webrtc.md`；相关 network-management checkpoints                                              | `src/modules/builtin/network-management/`、`clash-control/`；`e2e/network-management.spec.ts`。浏览器策略不等同系统代理或公网零泄漏。 |
 | Bookmark Doctor、Browser Journal、Send to OpenList                  | `docs/module-platform-architecture.md` 相应章节；相关 ADR / phase checkpoint；OpenList 另读 `docs/adr/0022-send-to-openlist-resource-inbox.md`                     | 对应 `src/modules/builtin/`；isolation tests；`e2e/basic.spec.ts`。未知结果写入按原规格处理。                                         |
-| 新 context、capability、controller、存储、外传 origin、凭据或遥测   | `docs/privacy-data-inventory.md`；相关 spec / ADR；`scripts/manifest.ts`                                                                                           | 有效 manifest、权限申请、owner、保留 / 删除、日志 / 截图、断开与撤销路径。隐私清单同次更新。                                          |
+| 新 context、capability、controller、存储、外传 origin、凭据或遥测   | `docs/privacy-data-inventory.md`；相关 spec / ADR；`src/manifest.ts`；`wxt.config.ts`                                                                              | 有效 manifest、权限申请、owner、保留 / 删除、日志 / 截图、断开与撤销路径。隐私清单同次更新。                                          |
 | 打包、产品身份、RC 或发布准备                                       | `docs/adr/0020-pre-release-clean-slate.md`；`0021-pre-release-convergence.md`；`docs/checkpoints/post-phase-9-release-convergence.md`；本轮最新 release checkpoint | `scripts/verify-pre-release-identity.ts`；manifest/build config；既有 CI / deploy。历史批准不授予本轮发布。                           |
+
+扩展构建、入口或工作台宿主变更另读 [ADR-0027](../adr/0027-wxt-react-tanstack-workspace.md)：
+`src/entrypoints/` 与 WXT 管理扩展产物，React 管理导航与列表，既有 DOM view/controller/protocol
+通过稳定 outlet 接入。Query 当前只读取模块 registry，不在重取中执行授权、模型请求或浏览器写入。
 
 ## 每次变更要守住的边界
 

@@ -104,7 +104,7 @@ test('real model grounds a page tool in changing webpage and selected facts', as
   const { gateway } = live
   const panel = await context.newPage()
   await panel.setViewportSize({ width: 420, height: 900 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await configureProvider(panel, gateway)
   const dialog = await createApp(panel, '网页标准工具', '真实模型项目简报')
   await dialog.getByRole('textbox', { name: '提示词', exact: true }).fill(
@@ -158,7 +158,7 @@ test('real generated mini app responds to pointer and keyboard and persists as a
   const { gateway } = live
   const panel = await context.newPage()
   await panel.setViewportSize({ width: 420, height: 900 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await configureProvider(panel, gateway)
   const dialog = await createApp(panel, '小应用', '真实模型计数器')
   await dialog.getByRole('textbox', { name: '描述你想创建的应用', exact: true }).fill(

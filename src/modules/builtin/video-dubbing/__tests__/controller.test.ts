@@ -5,7 +5,7 @@ import { VideoDubbingController } from '../controller'
 import { DubbingClient, handleDubbingMessage } from '../protocol'
 
 const extensionId = 'oneweb'
-const sender = { id: extensionId, url: 'chrome-extension://oneweb/dist/sidebar/index.html' }
+const sender = { id: extensionId, url: 'chrome-extension://oneweb/sidebar.html' }
 function setup(deferredDiscovery?: Promise<PlayerInfo>) {
   let saved: Record<string, unknown> = {}
   let enabled = true

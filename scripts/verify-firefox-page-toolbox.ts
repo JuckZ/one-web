@@ -9,8 +9,11 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import fs from 'fs-extra'
 import { runFirefoxAssistantScenario } from './firefox-assistant-scenario'
+import { resolveFirefoxBinary, terminateProcessGroup } from './firefox-runner'
 import { type FirefoxSmartAppsDriver, runFirefoxSmartAppsScenario } from './firefox-smart-apps-scenario'
 import { prepareFirefoxTestAudio } from './firefox-test-audio'
+
+export { terminateProcessGroup } from './firefox-runner'
 
 const EXTENSION_ID = 'one-web@juckz.local'
 const EXTENSION_SIDEBAR_IDENTITY = EXTENSION_ID.split('@')[0]
@@ -115,7 +118,7 @@ export function validateFirefoxArtifactManifest(value: unknown) {
   const sidebar = manifest.sidebar_action as JsonRecord | undefined
   if (manifest.manifest_version !== 3
     || geckoSettings?.id !== EXTENSION_ID
-    || sidebar?.default_panel !== 'dist/sidebar/index.html'
+    || sidebar?.default_panel !== 'sidebar.html'
     || Object.hasOwn(manifest, 'side_panel')) {
     throw new TypeError('Firefox artifact does not expose the expected production sidebar boundary')
   }
@@ -130,30 +133,6 @@ export function validateFirefoxArtifactManifest(value: unknown) {
     throw new TypeError('Firefox artifact permission boundary is invalid')
   }
   return true
-}
-
-export async function terminateProcessGroup(
-  pid: number | undefined,
-  kill: (_pid: number, _signal: NodeJS.Signals) => void = process.kill,
-  wait: (_milliseconds: number) => Promise<void> = delay,
-) {
-  if (!Number.isSafeInteger(pid) || !pid || pid < 1)
-    return [] as NodeJS.Signals[]
-  const signals: NodeJS.Signals[] = []
-  for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
-    try {
-      kill(-pid, signal)
-      signals.push(signal)
-    }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ESRCH')
-        break
-      throw error
-    }
-    if (signal === 'SIGTERM')
-      await wait(750)
-  }
-  return signals
 }
 
 function delay(milliseconds: number) {
@@ -860,7 +839,7 @@ async function runFirefoxScenario(
   const alphaHandle = handles[0]
   await navigate(client, `${alphaOrigin}/toolbox`)
   const betaHandle = await newTab(client, `${betaOrigin}/toolbox`)
-  const sidebarUrl = `${extensionOrigin}/dist/sidebar/index.html`
+  const sidebarUrl = `${extensionOrigin}/sidebar.html`
   const driverHandle = await newTab(client, sidebarUrl)
   await waitForPage(client, 'document.readyState==="complete"&&document.querySelector("[data-testid=manage-modules]")', 'trusted Firefox sidebar page')
 
@@ -871,7 +850,13 @@ async function runFirefoxScenario(
     'const child=controller?.browser?.contentDocument?.querySelector("#webext-panels-browser");',
     'return {current:controller?.currentID||null,uri:child?.currentURI?.spec||null,remote:child?.isRemoteBrowser===true};',
   ].join('')), 'real Firefox sidebar')
-  assert(actualSidebar.uri === sidebarUrl && actualSidebar.remote === true, 'Firefox did not load the packaged OneWeb sidebar')
+  const nativeSidebarUrl = typeof actualSidebar.uri === 'string' ? new URL(actualSidebar.uri) : null
+  const expectedSidebarUrl = new URL(sidebarUrl)
+  assert(nativeSidebarUrl?.protocol === expectedSidebarUrl.protocol
+    && nativeSidebarUrl.host === expectedSidebarUrl.host
+    && nativeSidebarUrl.pathname === expectedSidebarUrl.pathname
+    && nativeSidebarUrl.search === expectedSidebarUrl.search
+    && actualSidebar.remote === true, `Firefox did not load the packaged OneWeb sidebar: ${JSON.stringify(actualSidebar)}`)
   assert(typeof actualSidebar.current === 'string' && actualSidebar.current.includes(EXTENSION_SIDEBAR_IDENTITY), 'Firefox sidebar identity is invalid')
   await setContext(client, 'content')
   await switchWindow(client, driverHandle)
@@ -1573,18 +1558,19 @@ async function runNetworkManagementFirefoxScenario(client: MarionetteClient, dri
 
 async function main() {
   const projectDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-  const extensionDir = path.resolve(projectDir, process.env.EXTENSION_PATH || process.env.ONEWEB_EXTENSION_DIR || 'extension')
+  const extensionDir = path.resolve(projectDir, process.env.EXTENSION_PATH || process.env.ONEWEB_EXTENSION_DIR || 'artifacts/build/firefox')
   const manifest = await fs.readJson(path.join(extensionDir, 'manifest.json'))
   validateFirefoxArtifactManifest(manifest)
+  const firefoxBinary = resolveFirefoxBinary()
   const fixtures = await startFixtures()
   const marionettePort = await availablePort()
   const webExtCli = path.join(projectDir, 'node_modules/web-ext/bin/web-ext.js')
-  const firefoxBinary = process.env.FIREFOX_BINARY || '/usr/bin/firefox'
   const log = new FirefoxProcessLog()
   let child: ChildProcess | null = null
   let marionette: MarionetteClient | null = null
   let rdp: RdpClient | null = null
   let releaseAudio = async () => {}
+  const failures: unknown[] = []
   try {
     const audio = await prepareFirefoxTestAudio()
     releaseAudio = audio.cleanup
@@ -1608,7 +1594,7 @@ async function main() {
       `--pref=marionette.port=${marionettePort}`,
     ], {
       cwd: projectDir,
-      detached: true,
+      detached: process.platform !== 'win32',
       // Firefox 160 reads this environment variable for privileged automation;
       // the older --remote-allow-system-access argument alone is insufficient.
       env: { ...audio.env, NO_COLOR: '1', MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1' },
@@ -1634,16 +1620,27 @@ async function main() {
   }
   catch (error) {
     const detail = log.tail ? `\nFirefox output:\n${log.tail}` : ''
-    throw new Error(`${error instanceof Error ? error.stack || error.message : String(error)}${detail}`)
+    failures.push(new Error(`${error instanceof Error ? error.stack || error.message : String(error)}${detail}`))
   }
   finally {
-    marionette?.close()
-    rdp?.close()
-    await Promise.allSettled([
-      terminateProcessGroup(child?.pid),
-      fixtures.close(),
-      releaseAudio(),
+    // Wrap synchronous cleanup too, so one failure cannot skip other owned resources.
+    const cleanup = await Promise.allSettled([
+      Promise.resolve().then(() => marionette?.close()),
+      Promise.resolve().then(() => rdp?.close()),
+      Promise.resolve().then(() => terminateProcessGroup(child?.pid)),
+      Promise.resolve().then(() => fixtures.close()),
+      Promise.resolve().then(() => releaseAudio()),
     ])
+    for (const result of cleanup) {
+      if (result.status === 'rejected')
+        failures.push(result.reason)
+    }
+  }
+  if (failures.length === 1)
+    throw failures[0]
+  if (failures.length > 1) {
+    const details = failures.map(error => error instanceof Error ? error.stack || error.message : String(error)).join('\n')
+    throw new AggregateError(failures, `Firefox scenario or resource cleanup failed:\n${details}`)
   }
 }
 

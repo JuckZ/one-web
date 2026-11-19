@@ -47,6 +47,7 @@ export class PageAssistantSurface {
   private editor: HTMLElement | null = null
   private editorRange: Range | null = null
   private editorText = ''
+  private selectionSnapshot?: readonly [Node | null, number | null, Node | null, number | null, string]
   private readonly tasks: BrowserTasksSurface
 
   constructor(private readonly _document: Document, transport: { sendMessage: (_message: unknown) => Promise<unknown> }) {
@@ -615,8 +616,20 @@ export class PageAssistantSurface {
       this.toolbar.hidden = true
       return
     }
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null
+    const snapshot = [
+      native ?? range?.startContainer ?? null,
+      native ? native.selectionStart : range?.startOffset ?? null,
+      native ?? range?.endContainer ?? null,
+      native ? native.selectionEnd : range?.endOffset ?? null,
+      native ? native.value : editor?.textContent ?? selection?.toString() ?? '',
+    ] as const
+    // Restoring an editor range can deliver selectionchange after a fast answer completes.
+    if (!this.result.hidden && this.selectionSnapshot?.every((value, index) => value === snapshot[index]))
+      return
+    this.selectionSnapshot = snapshot
     this.editor = editor
-    this.editorRange = editor && !native && selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null
+    this.editorRange = editor && !native && range ? range.cloneRange() : null
     this.editorText = editor?.textContent ?? ''
     if (this.tools?.toolbar.mode === 'off' || (this.tools?.toolbar.mode === 'shortcut' && !this.forceToolbar)) {
       this.toolbar.hidden = true

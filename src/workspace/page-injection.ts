@@ -47,7 +47,7 @@ export function createPageContextInjection(scripting: PageScripting, tabs: {
         }
         catch {}
       }
-      const [result] = await scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] }, files: ['dist/assistantContent/index.global.js'] })
+      const [result] = await scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] }, files: ['assistant.js'] })
       const tabId = tab.id
       const session = createSession(tabId, result?.documentId)
       sessions.set(tabId, session)

@@ -52,15 +52,15 @@ export async function getManifest(options: ManifestBuildOptions = {}) {
       default_icon: './assets/icon-128.png',
     },
     side_panel: {
-      default_path: './dist/sidebar/index.html',
+      default_path: './sidebar.html',
     },
     background: firefox
       ? {
-          scripts: ['./dist/background/index.mjs'],
+          scripts: ['./background.js'],
           type: 'module',
         }
       : {
-          service_worker: './dist/background/index.mjs',
+          service_worker: './background.js',
           type: 'module',
         },
     icons: {
@@ -94,16 +94,10 @@ export async function getManifest(options: ManifestBuildOptions = {}) {
           'https://github.com/*',
         ],
         js: [
-          'dist/contentScripts/index.global.js',
+          'content-scripts/github.js',
         ],
         run_at: 'document_idle',
         all_frames: false,
-      },
-    ],
-    web_accessible_resources: [
-      {
-        resources: ['dist/contentScripts/style.css', 'dist/assets/*'],
-        matches: ['https://github.com/*'],
       },
     ],
     content_security_policy: {
@@ -115,7 +109,7 @@ export async function getManifest(options: ManifestBuildOptions = {}) {
       // app CSP. A custom unsafe-inline sandbox policy triggers Mozilla's remote-code gate.
       ...(firefox ? {} : { sandbox: MINI_APP_SANDBOX_CSP }),
     },
-    sandbox: { pages: ['dist/apps/sandbox.html'] },
+    sandbox: { pages: ['sandbox.html'] },
     browser_specific_settings: {
       gecko: firefoxSettings,
     },
@@ -125,7 +119,7 @@ export async function getManifest(options: ManifestBuildOptions = {}) {
   if (firefox) {
     delete manifest.side_panel
     manifest.sidebar_action = {
-      default_panel: 'dist/sidebar/index.html',
+      default_panel: 'sidebar.html',
       default_title: 'OneWeb',
       default_icon: './assets/icon-128.png',
     }
@@ -133,7 +127,7 @@ export async function getManifest(options: ManifestBuildOptions = {}) {
   else {
     // the sidebar_action does not work for chromium based
     (manifest as any).side_panel = {
-      default_path: 'dist/sidebar/index.html',
+      default_path: 'sidebar.html',
     }
   }
 

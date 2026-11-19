@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import spawn from 'cross-spawn'
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const distRoot = path.join(packageRoot, 'dist')
@@ -75,7 +75,7 @@ const forbiddenContent = [
 ]
 
 function run(command, args) {
-  const result = spawnSync(command, args, {
+  const result = spawn.sync(command, args, {
     cwd: packageRoot,
     encoding: 'utf8',
     env: process.env,
@@ -84,6 +84,8 @@ function run(command, args) {
     process.stdout.write(result.stdout)
   if (result.stderr)
     process.stderr.write(result.stderr)
+  if (result.error)
+    throw result.error
   assert.equal(result.status, 0, `${command} ${args.join(' ')} failed`)
 }
 
@@ -131,13 +133,15 @@ const first = snapshotDist()
 run('pnpm', ['run', 'build'])
 const second = snapshotDist()
 assert.deepEqual(second, first, 'Module SDK package output changed between two clean builds')
-const pack = spawnSync('npm', ['pack', '--dry-run', '--json', '--loglevel=error'], {
+const pack = spawn.sync('npm', ['pack', '--dry-run', '--json', '--loglevel=error'], {
   cwd: packageRoot,
   encoding: 'utf8',
   env: process.env,
 })
 if (pack.stderr)
   process.stderr.write(pack.stderr)
+if (pack.error)
+  throw pack.error
 assert.equal(pack.status, 0, 'npm pack --dry-run failed')
 const [packResult] = JSON.parse(pack.stdout)
 assert.deepEqual(

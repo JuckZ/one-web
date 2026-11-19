@@ -135,7 +135,7 @@ test.use({ extraHostOrigins: ['https://api.github.com/*'] })
 test('packaged RepoLens analyzes GitHub directly, caches locally and exports a source-qualified report', async ({ context, extensionId }) => {
   const panel = await context.newPage()
   await panel.setViewportSize({ width: 420, height: 900 })
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html?moduleId=dev.juck.repolens`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html?moduleId=dev.juck.repolens`)
   await expect(panel.getByTestId('repolens-workspace')).toBeVisible()
   const network = await githubNetworkFixture(context, extensionId)
   try {

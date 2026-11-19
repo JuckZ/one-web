@@ -111,7 +111,7 @@ export class NetworkManagementController {
     const enabled = [settings.blockSupport, settings.blockDevices, settings.blockAdditional]
     return NETWORK_SCRIPT_IDS.filter((_id, index) => enabled[index]).map(id => ({
       id,
-      js: [`dist/network/${id.slice('oneweb-network-'.length)}.js`],
+      js: [`network-${id.slice('oneweb-network-'.length)}.js`],
       matches: [...NETWORK_HOST_PERMISSIONS],
       world: 'MAIN',
       runAt: 'document_start',

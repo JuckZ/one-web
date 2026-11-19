@@ -53,7 +53,14 @@ const unavailableTitle = unavailable.querySelector<HTMLElement>('[data-unavailab
 const unavailableDescription = unavailable.querySelector<HTMLElement>('[data-unavailable-description]')!
 const openManagerButton = unavailable.querySelector<HTMLButtonElement>('[data-open-module-manager]')!
 const extensionOrigin = new URL(browser.runtime.getURL('/')).origin
-const requestedModuleId = new URL(globalThis.location.href).searchParams.get('moduleId')
+const entryUrl = new URL(globalThis.location.href)
+const requestedModuleId = entryUrl.hash.length > 1 ? null : entryUrl.searchParams.get('moduleId')
+// The query is a one-shot browser action. Consume it before hash history starts,
+// so later navigation/reload cannot reopen the original tool.
+if (entryUrl.searchParams.has('moduleId')) {
+  entryUrl.searchParams.delete('moduleId')
+  history.replaceState(history.state, '', entryUrl.href)
+}
 const contextBroker = createDefaultContextBroker()
 const managementClient = new ModuleManagementClient({
   sendMessage: message => browser.runtime.sendMessage(message),
@@ -97,8 +104,9 @@ let moduleHost: ModuleFrameHost | null = null
 let currentSnapshot: ContextSnapshot | null = null
 let activeRecord: InstalledModuleRecord | null = null
 let managementView: ModuleManagementView | null = null
-let renderedDestination = ''
+let renderedDestination: WorkspaceSnapshot['destination'] | '' = ''
 let previousDestination: WorkspaceSnapshot['destination'] = 'assistant'
+let workspaceInitialized = false
 const workspaceRoot = document.querySelector<HTMLElement>('[data-testid="workspace"]')!
 const workspace = new WorkspaceController({ storage: browser.storage.local, listModules: () => managementClient.list() })
 const workspaceView = new WorkspaceView(workspaceRoot, workspace)
@@ -109,6 +117,7 @@ const assistantView = new AssistantView(assistantSurface, {
   client: new AssistantClient({ sendMessage: message => browser.runtime.sendMessage(message) }),
   permissions: browser.permissions,
   onConversationOpen: () => workspace.open('assistant'),
+  onDraftReturn: closeModuleManager,
   pageContext: pageContextClient,
   pageActions: pageActionClient,
 })
@@ -119,7 +128,7 @@ const smartAppsView = new SmartAppsView(appsSurface, {
   assistant: new AssistantClient({ sendMessage: message => browser.runtime.sendMessage(message) }),
   page: pageContextClient,
   permissions: browser.permissions,
-  sandboxUrl: browser.runtime.getURL('/dist/apps/sandbox.html'),
+  sandboxUrl: browser.runtime.getURL('/sandbox.html'),
   openModule: id => workspace.open(`module:${id}`),
   setModuleEnabled: async (id, enabled) => {
     const result = await managementClient.setEnabled(id, enabled)
@@ -129,8 +138,11 @@ const smartAppsView = new SmartAppsView(appsSurface, {
   settings: () => workspace.open('settings'),
 })
 workspaceView.setToolsRenderer((outlet, state) => {
-  if (!outlet.contains(appsSurface))
-    outlet.replaceChildren(appsSurface)
+  if (outlet.contains(appsSurface)) {
+    smartAppsView.updateModules(state.modules)
+    return
+  }
+  outlet.replaceChildren(appsSurface)
   void smartAppsView.open(state.modules)
 })
 let repoLensView: RepoLensView | null = null
@@ -252,13 +264,11 @@ function handleRuntimeMessage(message: unknown, sender: Runtime.MessageSender) {
 browser.runtime.onMessage.addListener(handleRuntimeMessage)
 
 function openModuleManager() {
-  if (workspace.snapshot().destination !== 'settings')
-    previousDestination = workspace.snapshot().destination
   void workspace.open('settings')
 }
 
 function closeModuleManager() {
-  void workspace.open(previousDestination === 'settings' ? 'assistant' : previousDestination)
+  return workspace.open(previousDestination === 'settings' ? 'assistant' : previousDestination)
 }
 
 function createManagementView() {
@@ -298,6 +308,8 @@ function createManagementView() {
 async function renderDestination(state: WorkspaceSnapshot) {
   if (state.destination === renderedDestination)
     return
+  if (workspaceInitialized && state.destination === 'settings' && renderedDestination)
+    previousDestination = renderedDestination
   renderedDestination = state.destination
   if (state.destination !== 'tools')
     smartAppsView.dispose()
@@ -399,21 +411,26 @@ browser.tabs.onUpdated.addListener((_tabId, change) => {
   if (change.url)
     void assistantView.refreshCurrentPage()
 })
-browser.storage.onChanged.addListener((changes, area) => {
+browser.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'local')
     return
-  if (changes['oneweb.smart-apps.v1'])
-    void smartAppsView.libraryChanged()
-  if (!changes['oneweb.modules.v1'])
-    return
-  const records: unknown = changes['oneweb.modules.v1'].newValue
-  if (Array.isArray(records) && records.some(record => record?.manifest?.id === 'dev.oneweb.cookie-manager' && !record.enabled))
-    managementView?.clearCookieSession()
-  if (repoLensView && Array.isArray(records) && records.some(record => record?.manifest?.id === 'dev.juck.repolens' && !record.enabled)) {
-    repoLensView.dispose()
-    repoLensView = null
-    renderedDestination = ''
-    void workspace.initialize()
+  try {
+    if (changes['oneweb.smart-apps.v1'])
+      await smartAppsView.libraryChanged()
+    if (!changes['oneweb.modules.v1'])
+      return
+    const records: unknown = changes['oneweb.modules.v1'].newValue
+    if (Array.isArray(records) && records.some(record => record?.manifest?.id === 'dev.oneweb.cookie-manager' && !record.enabled))
+      managementView?.clearCookieSession()
+    if (repoLensView && Array.isArray(records) && records.some(record => record?.manifest?.id === 'dev.juck.repolens' && !record.enabled)) {
+      repoLensView.dispose()
+      repoLensView = null
+      renderedDestination = ''
+    }
+    await workspace.initialize()
+  }
+  catch {
+    contextLabel.textContent = '工具列表更新失败，请刷新重试。'
   }
 })
 
@@ -423,15 +440,19 @@ openManagerButton.addEventListener('click', openModuleManager)
 
 async function initialize() {
   await workspaceView.initialize()
-  if (requestedModuleId && requestedModuleId.length <= 128)
+  workspaceInitialized = true
+  if (requestedModuleId && requestedModuleId.length <= 128
+    && workspace.snapshot().modules.some(record => record.manifest.id === requestedModuleId)) {
     await workspace.open(`module:${requestedModuleId}`)
+  }
   await requestCurrentContext()
   const handoff = new URL(globalThis.location.href).searchParams.get('handoff')
   if (handoff) {
     const draft = await pageActionClient.handoff(handoff)
     await workspace.open(draft.intent === 'translate' ? 'translation' : draft.intent === 'summarize' ? 'reading' : 'assistant')
     await assistantView.acceptDraft(draft)
-    history.replaceState(null, '', browser.runtime.getURL('/dist/sidebar/index.html'))
+    await workspaceView.navigate(workspace.snapshot().destination, true)
+    history.replaceState(history.state, '', `${browser.runtime.getURL('/sidebar.html')}${location.hash}`)
   }
 }
 
@@ -439,7 +460,7 @@ document.querySelector('[data-testid="new-conversation"]')?.addEventListener('cl
   void assistantView.newConversation().then(() => workspace.open('assistant'))
 })
 document.querySelector('[data-testid="open-workspace-tab"]')?.addEventListener('click', () => {
-  void browser.tabs.create({ url: browser.runtime.getURL('/dist/sidebar/index.html') })
+  void browser.tabs.create({ url: browser.runtime.getURL('/sidebar.html') })
 })
 window.addEventListener('pagehide', () => {
   assistantView.dispose()

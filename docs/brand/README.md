@@ -70,14 +70,16 @@ docs/brand/concepts/
       icon-512.png
 ```
 
-The active runtime copies live in `extension/assets/`. The 512px source used by extension pages
-also lives at `src/assets/icon.png`.
+Current runtime icon sources live in `public/assets/`. WXT copies them to `assets/` in each selected
+`artifacts/{dev,build,test}/<browser>/` output. The current workspace does not use the legacy
+`src/assets/icon.png` demo image.
 
 ## Switching to another concept
 
 1. Update `displayName` and `description` in `package.json`.
-2. Copy the selected concept's PNG files into `extension/assets/`, keeping the runtime filenames.
-3. Copy its `icon-512.png` to both `extension/assets/icon.png` and `src/assets/icon.png`.
+2. Copy the selected concept's PNG files into `public/assets/`, keeping the runtime filenames.
+3. Keep `icon-512.png` in that source directory; rebuild the intended browser outputs rather than
+   editing generated `assets/` directories.
 4. Update visible product-level copy, while leaving module names such as RepoLens unchanged.
 5. Run `pnpm build`, `pnpm typecheck`, `pnpm test` and `pnpm manifest:validate`.
 

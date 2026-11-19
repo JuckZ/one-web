@@ -33,7 +33,7 @@ export function createDubbingInjection(
         : playerInfo(result?.result, site.videoId, result?.documentId ?? '')
     },
     async inject(tabId: number) {
-      await scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['/dist/videoDubbing/index.global.js'] })
+      await scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['/video-dubbing.js'] })
     },
   }
 }

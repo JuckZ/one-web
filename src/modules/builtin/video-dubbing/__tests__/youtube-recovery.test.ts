@@ -65,7 +65,7 @@ function youtube() {
     async sendMessage(message) {
       return handleDubbingMessage(controller, message, {
         id: 'oneweb',
-        url: 'chrome-extension://oneweb/dist/sidebar/index.html',
+        url: 'chrome-extension://oneweb/sidebar.html',
       }, 'oneweb', 'chrome-extension://oneweb/')
     },
   })

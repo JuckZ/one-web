@@ -39,7 +39,8 @@
   min-width: 120px;
 }
 .smart-apps input,
-.smart-apps textarea {
+.smart-apps textarea,
+.smart-apps select {
   box-sizing: border-box;
   padding: 10px 12px;
   border: 1px solid var(--workspace-line);
@@ -59,6 +60,23 @@
   border: 1px solid var(--workspace-line);
   border-radius: 14px;
   background: var(--workspace-line);
+}
+.smart-apps-list-virtual {
+  display: block;
+  height: min(65dvh, 720px);
+  overflow: auto;
+  overflow-anchor: none;
+}
+.smart-apps-virtual-content {
+  position: relative;
+}
+.smart-apps-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding-bottom: 1px;
 }
 .smart-app-row {
   display: flex;

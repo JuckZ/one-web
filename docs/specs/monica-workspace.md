@@ -306,7 +306,8 @@ Firefox 如需宣称同等支持，必须另有构建、manifest 与真实浏览
 
 ## 8. 预计接线范围
 
-按实际切片引入以下代码，不提前创建空模块：
+按实际切片引入以下代码，不提前创建空模块。2026-11-19 构建与宿主接线按
+[ADR-0027](../adr/0027-wxt-react-tanstack-workspace.md) 更新，MW 验收和历史证据仍保留原范围：
 
 ```text
 src/workspace/                         工作区导航、状态和 mount/dispose
@@ -317,10 +318,14 @@ src/sidebar/*-view.ts                 现有各工具的独立使用视图
 src/background/main.ts               有限消息路由、身份与生命周期接线
 src/background/browser-action-entry.ts
 src/sidebar/main.ts
-src/sidebar/index.html
+src/entrypoints/sidebar.html           WXT 工作台 HTML 入口，输出 sidebar.html
+src/workspace/workspace-view.tsx       React 导航与 TanStack hash 路由
+src/sidebar/smart-apps-list.tsx        React + Table/Virtual 应用列表
 src/sidebar/module-management-view.ts
-src/manifest.ts
-vite.config.*                         固定 content artifact 构建
+src/manifest.ts                       身份、权限与 CSP
+src/entrypoints/*.ts                   WXT 后台、GitHub 和固定 runtime 入口
+public/sandbox.html                   声明式 sandbox，classic loader
+wxt.config.ts                         扩展构建与 React 集成
 e2e/                                  本机页面与 HTTP/SSE fixtures
 ```
 

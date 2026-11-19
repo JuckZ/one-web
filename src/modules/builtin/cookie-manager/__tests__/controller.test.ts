@@ -365,7 +365,7 @@ it('previews JSON without writing, imports only reviewed items into the chosen s
 it('serves the finite client protocol only to our packaged pages and rejects extra authority fields', async () => {
   const f = fixture()
   f.permit()
-  const sender = { id: 'oneweb-test', url: 'chrome-extension://oneweb-test/dist/sidebar/index.html' }
+  const sender = { id: 'oneweb-test', url: 'chrome-extension://oneweb-test/sidebar.html' }
   const route = (message: unknown, candidate = sender) => handleCookieManagerMessage(
     f.controller,
     message,
@@ -517,7 +517,7 @@ it('exposes Firefox unpartitioned cookies with native null partition keys as edi
     sendMessage: async message => handleCookieManagerMessage(
       f.controller,
       message,
-      { id: 'test', url: 'moz-extension://test/dist/sidebar/index.html' },
+      { id: 'test', url: 'moz-extension://test/sidebar.html' },
       'test',
       'moz-extension://test/',
     ),
@@ -668,7 +668,7 @@ it('reports invalid editor fields through the client without losing the existing
     sendMessage: async message => handleCookieManagerMessage(
       f.controller,
       message,
-      { id: 'test', url: 'chrome-extension://test/dist/sidebar/index.html' },
+      { id: 'test', url: 'chrome-extension://test/sidebar.html' },
       'test',
       'chrome-extension://test/',
     ),

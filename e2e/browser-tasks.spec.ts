@@ -72,7 +72,7 @@ const test = base.extend<{ screenshotAccess: boolean, tasksFixture: { origin: st
 
 async function openTaskPage(context: import('@playwright/test').BrowserContext, extensionId: string, origin: string, path = '/article') {
   const panel = await context.newPage()
-  await panel.goto(`chrome-extension://${extensionId}/dist/sidebar/index.html`)
+  await panel.goto(`chrome-extension://${extensionId}/sidebar.html`)
   await panel.locator('[data-destination="settings"]').click()
   await panel.getByRole('textbox', { name: '服务地址', exact: true }).fill(`${origin}/v1/`)
   await panel.getByRole('textbox', { name: '模型（每行一个）', exact: true }).fill('fixture-model')

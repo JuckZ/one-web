@@ -23,7 +23,7 @@ async function main() {
     }
   }
   const manifest = await fs.readJson(path.join(output, 'manifest.json'))
-  if (manifest.manifest_version !== 3 || !manifest.background?.service_worker || !manifest.sandbox?.pages?.includes('dist/apps/sandbox.html'))
+  if (manifest.manifest_version !== 3 || !manifest.background?.service_worker || !manifest.sandbox?.pages?.includes('sandbox.html'))
     throw new Error('需要当前生产 Chromium 构建；请去掉 --no-build 重新构建')
   const tested = spawnSync(pnpm, ['exec', 'playwright', 'test', '--config', 'playwright.live.config.ts', '--retries=0'], { stdio: 'inherit', env: environment })
   process.exitCode = tested.status === 0 ? 0 : (tested.status ?? 1)

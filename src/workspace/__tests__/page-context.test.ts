@@ -11,7 +11,7 @@ it('attaches visible article text with a scrubbed source and invalidates its tok
     permissions: { contains: async () => true },
     injection: { connect: async () => ({ documentId: 'doc-a', request: async message => runtime.handle(message) }) },
   })
-  const sender = { id: 'oneweb', url: 'chrome-extension://oneweb/dist/sidebar/index.html', documentId: 'workspace-a' }
+  const sender = { id: 'oneweb', url: 'chrome-extension://oneweb/sidebar.html', documentId: 'workspace-a' }
   const client = new PageContextClient({ sendMessage: async message => handlePageContextMessage(controller, message, sender, 'oneweb', 'chrome-extension://oneweb/') })
   const attachment = await client.captureCurrentPage()
   expect(attachment).toMatchObject({
@@ -61,7 +61,7 @@ it('matches bilingual translations by block ID and restores only owned translati
   const client = new PageContextClient({
     sendMessage: async message => handlePageContextMessage(controller, message, {
       id: 'oneweb',
-      url: 'chrome-extension://oneweb/dist/sidebar/index.html',
+      url: 'chrome-extension://oneweb/sidebar.html',
       documentId: 'workspace-a',
     }, 'oneweb', 'chrome-extension://oneweb/'),
   })
@@ -120,7 +120,7 @@ it('does not insert a late translation after the user stops during final page au
   const client = new PageContextClient({
     sendMessage: async message => handlePageContextMessage(controller, message, {
       id: 'oneweb',
-      url: 'chrome-extension://oneweb/dist/sidebar/index.html',
+      url: 'chrome-extension://oneweb/sidebar.html',
       documentId: 'workspace-a',
     }, 'oneweb', 'chrome-extension://oneweb/'),
   })
@@ -151,7 +151,7 @@ it('freezes an editor selection, previews without writing and refuses to replace
   const client = new PageContextClient({
     sendMessage: async message => handlePageContextMessage(controller, message, {
       id: 'oneweb',
-      url: 'chrome-extension://oneweb/dist/sidebar/index.html',
+      url: 'chrome-extension://oneweb/sidebar.html',
       documentId: 'workspace-a',
     }, 'oneweb', 'chrome-extension://oneweb/'),
   })

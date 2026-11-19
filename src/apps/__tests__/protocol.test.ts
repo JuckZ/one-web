@@ -9,7 +9,7 @@ function setup() {
     async get(key) { return structuredClone({ [key]: data[key] }) },
     async set(items) { Object.assign(data, structuredClone(items)) },
   } })
-  const sender = { id: 'oneweb', url: 'chrome-extension://oneweb/dist/sidebar/index.html' }
+  const sender = { id: 'oneweb', url: 'chrome-extension://oneweb/sidebar.html' }
   const client = new SmartAppsClient({ async sendMessage(message) {
     return handleSmartAppsMessage(controller, message, sender, 'oneweb', 'chrome-extension://oneweb/')
   } })
@@ -36,7 +36,7 @@ describe('trusted smart apps transport', () => {
     for (const untrusted of [
       { id: 'oneweb', url: 'https://github.com/vuejs/core' },
       { id: 'another', url: sender.url },
-      { id: 'oneweb', url: 'chrome-extension://oneweb.evil.test/dist/sidebar/index.html' },
+      { id: 'oneweb', url: 'chrome-extension://oneweb.evil.test/sidebar.html' },
       { id: 'oneweb', url: 'null' },
     ]) {
       expect(handleSmartAppsMessage(controller, message, untrusted, 'oneweb', 'chrome-extension://oneweb/')).toBeUndefined()

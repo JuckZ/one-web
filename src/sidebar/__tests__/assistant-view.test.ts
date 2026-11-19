@@ -26,7 +26,7 @@ it('preserves a draft through first configuration and renders an untrusted answe
   const client = new AssistantClient({
     sendMessage: async message => handleAssistantMessage(controller, message, {
       id: 'test',
-      url: 'chrome-extension://test/dist/sidebar/index.html',
+      url: 'chrome-extension://test/sidebar.html',
       documentId: 'ui',
     }, 'test', 'chrome-extension://test/'),
   })
@@ -60,6 +60,45 @@ it('preserves a draft through first configuration and renders an untrusted answe
   view.dispose()
 })
 
+it('returns inline configuration to the current draft and delegates only the settings route to its host', async () => {
+  const fetch = vi.fn()
+  const controller = new AssistantController({
+    storage: storage(),
+    secrets: storage(),
+    permissions: { contains: async () => false },
+    fetch,
+  })
+  const client = new AssistantClient({
+    sendMessage: async message => handleAssistantMessage(controller, message, {
+      id: 'test',
+      url: 'chrome-extension://test/sidebar.html',
+      documentId: 'ui',
+    }, 'test', 'chrome-extension://test/'),
+  })
+  const root = document.createElement('section')
+  document.body.replaceChildren(root)
+  let view: AssistantView
+  const onDraftReturn = vi.fn(async () => view.open('reading'))
+  view = new AssistantView(root, { client, permissions: { request: async () => false }, onDraftReturn })
+  await view.open('reading')
+  const input = root.querySelector<HTMLTextAreaElement>('[aria-label="消息"]')!
+  input.value = '保留阅读草稿'
+  input.dispatchEvent(new Event('input'))
+  root.querySelector<HTMLButtonElement>('[data-testid="assistant-send"]')!.click()
+  await vi.waitFor(() => expect(root.querySelector('[data-testid="assistant-back"]')).not.toBeNull())
+  root.querySelector<HTMLButtonElement>('[data-testid="assistant-back"]')!.click()
+  await vi.waitFor(() => expect(root.querySelector<HTMLTextAreaElement>('[aria-label="消息"]')?.value).toBe('保留阅读草稿'))
+  expect(root.querySelector('h1')?.textContent).toBe('阅读与理解')
+  expect(onDraftReturn).not.toHaveBeenCalled()
+  await view.open('settings')
+  root.querySelector<HTMLButtonElement>('[data-testid="assistant-back"]')!.click()
+  await vi.waitFor(() => expect(root.querySelector('h1')?.textContent).toBe('阅读与理解'))
+  expect(root.querySelector<HTMLTextAreaElement>('[aria-label="消息"]')?.value).toBe('保留阅读草稿')
+  expect(onDraftReturn).toHaveBeenCalledOnce()
+  expect(fetch).not.toHaveBeenCalled()
+  view.dispose()
+})
+
 it('imports subtitles and sends them with a user-authored prompt selected in the reading workspace', async () => {
   const sent: Array<{ role: string, content: string }> = []
   const controller = new AssistantController({
@@ -74,7 +113,7 @@ it('imports subtitles and sends them with a user-authored prompt selected in the
   const client = new AssistantClient({
     sendMessage: async message => handleAssistantMessage(controller, message, {
       id: 'test',
-      url: 'chrome-extension://test/dist/sidebar/index.html',
+      url: 'chrome-extension://test/sidebar.html',
       documentId: 'ui',
     }, 'test', 'chrome-extension://test/'),
   })
@@ -123,7 +162,7 @@ it('manages prompt edits and order and requires an explicit confirmation before 
   const client = new AssistantClient({
     sendMessage: async message => handleAssistantMessage(controller, message, {
       id: 'test',
-      url: 'chrome-extension://test/dist/sidebar/index.html',
+      url: 'chrome-extension://test/sidebar.html',
       documentId: 'ui',
     }, 'test', 'chrome-extension://test/'),
   })
@@ -175,7 +214,7 @@ it('keeps IME Enter local and retries a failed response only after the user clic
   const client = new AssistantClient({
     sendMessage: async message => handleAssistantMessage(controller, message, {
       id: 'test',
-      url: 'chrome-extension://test/dist/sidebar/index.html',
+      url: 'chrome-extension://test/sidebar.html',
       documentId: 'ui',
     }, 'test', 'chrome-extension://test/'),
   })
@@ -213,7 +252,7 @@ it('keeps a new conversation empty when the previous browser message arrives lat
     sendMessage: async (message) => {
       const result = await handleAssistantMessage(controller, message, {
         id: 'test',
-        url: 'chrome-extension://test/dist/sidebar/index.html',
+        url: 'chrome-extension://test/sidebar.html',
         documentId: 'ui',
       }, 'test', 'chrome-extension://test/')
       if ((message as { command?: string }).command === 'open' && !delayed) {
@@ -258,7 +297,7 @@ it('preserves a handed-off explanation intent for the first send and then permit
   const client = new AssistantClient({
     sendMessage: async message => handleAssistantMessage(controller, message, {
       id: 'test',
-      url: 'chrome-extension://test/dist/sidebar/index.html',
+      url: 'chrome-extension://test/sidebar.html',
       documentId: 'ui',
     }, 'test', 'chrome-extension://test/'),
   })
@@ -288,7 +327,7 @@ it('offers editor replacement only for the answer generated from the current fro
     permissions: { contains: async () => true },
     injection: { connect: async () => ({ documentId: 'editor', request: async message => runtime.handle(message) }) },
   })
-  const sender = { id: 'test', url: 'chrome-extension://test/dist/sidebar/index.html', documentId: 'ui' }
+  const sender = { id: 'test', url: 'chrome-extension://test/sidebar.html', documentId: 'ui' }
   const pageClient = new PageContextClient({
     sendMessage: async message => handlePageContextMessage(page, message, sender, 'test', 'chrome-extension://test/'),
   })
@@ -352,7 +391,7 @@ it('keeps the draft sendable after the first conversation reply is lost in brows
     sendMessage: async (message) => {
       const result = await handleAssistantMessage(controller, message, {
         id: 'test',
-        url: 'chrome-extension://test/dist/sidebar/index.html',
+        url: 'chrome-extension://test/sidebar.html',
         documentId: 'ui',
       }, 'test', 'chrome-extension://test/')
       if ((message as { command?: string }).command === 'open' && interrupt) {

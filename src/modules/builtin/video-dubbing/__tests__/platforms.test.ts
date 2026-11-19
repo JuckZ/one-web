@@ -45,7 +45,7 @@ function platform(url: string, state: unknown) {
     sendMessage: async message => handleDubbingMessage(
       controller,
       message,
-      { id: 'oneweb', url: 'chrome-extension://oneweb/dist/sidebar/index.html' },
+      { id: 'oneweb', url: 'chrome-extension://oneweb/sidebar.html' },
       'oneweb',
       'chrome-extension://oneweb/',
     ),

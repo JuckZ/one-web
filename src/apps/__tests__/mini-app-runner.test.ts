@@ -21,7 +21,7 @@ describe('mini application sandbox runner', () => {
     const root = document.createElement('section')
     document.body.append(root)
     let ready = false
-    const mounted = runner.mount(root, { title: '交互阅读', sandboxUrl: 'chrome-extension://oneweb/dist/apps/sandbox.html', html: '<script>throw 1</script><p id="app-private">data</p>' })
+    const mounted = runner.mount(root, { title: '交互阅读', sandboxUrl: 'chrome-extension://oneweb/sandbox.html', html: '<script>throw 1</script><p id="app-private">data</p>' })
     void mounted.then(() => {
       ready = true
     })
@@ -48,9 +48,9 @@ describe('mini application sandbox runner', () => {
   it('rejects remote running pages and destroys a pending preview on close', async () => {
     const runner = new MiniAppRunner()
     const root = document.createElement('section')
-    await expect(runner.mount(root, { html: '<p>x</p>', sandboxUrl: 'https://example.test/dist/apps/sandbox.html' })).rejects.toThrow('打包')
+    await expect(runner.mount(root, { html: '<p>x</p>', sandboxUrl: 'https://example.test/sandbox.html' })).rejects.toThrow('打包')
     expect(root.children).toHaveLength(0)
-    const mounted = runner.mount(root, { html: '<p>x</p>', sandboxUrl: 'moz-extension://oneweb/dist/apps/sandbox.html' })
+    const mounted = runner.mount(root, { html: '<p>x</p>', sandboxUrl: 'moz-extension://oneweb/sandbox.html' })
     const rejected = expect(mounted).rejects.toThrow('关闭')
     runner.dispose()
     await rejected
@@ -61,7 +61,7 @@ describe('mini application sandbox runner', () => {
     vi.useFakeTimers()
     const runner = new MiniAppRunner()
     const root = document.createElement('section')
-    const mounted = runner.mount(root, { html: '<p>x</p>', sandboxUrl: 'chrome-extension://oneweb/dist/apps/sandbox.html' })
+    const mounted = runner.mount(root, { html: '<p>x</p>', sandboxUrl: 'chrome-extension://oneweb/sandbox.html' })
     const rejected = expect(mounted).rejects.toThrow('超时')
     await vi.advanceTimersByTimeAsync(8000)
     await rejected

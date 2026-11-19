@@ -34,7 +34,7 @@ function fixture(fetcher?: typeof fetch) {
   })
   const client = new RepoLensClient({ sendMessage: async message => handleRepoLensMessage(controller, message, {
     id: 'test',
-    url: 'chrome-extension://test/dist/sidebar/index.html',
+    url: 'chrome-extension://test/sidebar.html',
     documentId: 'view',
   }, 'test', 'chrome-extension://test/') })
   const root = document.createElement('section')

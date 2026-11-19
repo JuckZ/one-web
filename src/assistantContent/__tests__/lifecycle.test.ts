@@ -21,7 +21,8 @@ vi.mock('~/platform/browser', () => ({ default: extension.browser }))
 afterEach(() => window.dispatchEvent(new Event('pagehide')))
 
 it('releases the browser message subscription when its page runtime is explicitly disposed', async () => {
-  await import('../index')
+  const { initializeAssistantContent } = await import('../index')
+  initializeAssistantContent()
   expect(await extension.deliver('ping')).toEqual([{ ok: true, value: null }])
   expect(await extension.deliver('dispose')).toEqual([{ ok: true, value: null }])
   expect(await extension.deliver('ping')).toEqual([])

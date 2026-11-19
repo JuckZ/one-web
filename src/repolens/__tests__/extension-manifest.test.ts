@@ -11,15 +11,15 @@ describe('browser-target extension manifests', () => {
     expect(manifest.manifest_version).toBe(3)
     expect(manifest.minimum_chrome_version).toBe('148')
     expect(manifest.background).toEqual({
-      service_worker: './dist/background/index.mjs',
+      service_worker: './background.js',
       type: 'module',
     })
-    expect(manifest.side_panel).toEqual({ default_path: 'dist/sidebar/index.html' })
+    expect(manifest.side_panel).toEqual({ default_path: 'sidebar.html' })
     expect(manifest.sidebar_action).toBeUndefined()
     expect(manifest.permissions).toContain('sidePanel')
     expect(manifest.host_permissions).toEqual(['https://github.com/*'])
     expect(manifest.optional_host_permissions).toContain('https://*/*')
-    expect(manifest.sandbox).toEqual({ pages: ['dist/apps/sandbox.html'] })
+    expect(manifest.sandbox).toEqual({ pages: ['sandbox.html'] })
     expect(manifest.content_security_policy).toMatchObject({
       sandbox: expect.stringContaining('connect-src \'none\''),
       extension_pages: expect.stringContaining('frame-src \'self\''),
@@ -37,17 +37,17 @@ describe('browser-target extension manifests', () => {
     expect(manifest.manifest_version).toBe(3)
     expect(manifest.minimum_chrome_version).toBeUndefined()
     expect(manifest.background).toEqual({
-      scripts: ['./dist/background/index.mjs'],
+      scripts: ['./background.js'],
       type: 'module',
     })
     expect(manifest.side_panel).toBeUndefined()
     expect(manifest.sidebar_action).toEqual({
-      default_panel: 'dist/sidebar/index.html',
+      default_panel: 'sidebar.html',
       default_title: 'OneWeb',
       default_icon: './assets/icon-128.png',
     })
     expect(manifest.permissions).not.toContain('sidePanel')
-    expect(manifest.sandbox).toEqual({ pages: ['dist/apps/sandbox.html'] })
+    expect(manifest.sandbox).toEqual({ pages: ['sandbox.html'] })
     expect((manifest.content_security_policy as { sandbox?: string }).sandbox).toBeUndefined()
     expect(manifest.browser_specific_settings?.gecko?.id).toBe('one-web@juckz.local')
     expect(manifest.browser_specific_settings?.gecko?.strict_min_version).toBe('142.0')

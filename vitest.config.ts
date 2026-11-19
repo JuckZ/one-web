@@ -1,91 +1,32 @@
-import { dirname, relative } from 'node:path'
-import Vue from '@vitejs/plugin-vue'
-import UnoCSS from 'unocss/vite'
-import AutoImport from 'unplugin-auto-import/vite'
-import ElementPlus from 'unplugin-element-plus'
-import IconsResolver from 'unplugin-icons/resolver'
-import Icons from 'unplugin-icons/vite'
-import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
-import Components from 'unplugin-vue-components/vite'
+import { fileURLToPath } from 'node:url'
+import React from '@vitejs/plugin-react'
 import { coverageConfigDefaults, defineConfig } from 'vitest/config'
-import packageJson from './package.json'
-import { isDev, r } from './scripts/utils'
 
+const r = (value: string) => fileURLToPath(new URL(value, import.meta.url))
 export default defineConfig({
-  root: r('src'),
+  root: r('./src'),
+  plugins: [React()],
   resolve: {
-    alias: {
-      '@oneweb/module-sdk': r('packages/module-sdk/src/index.ts'),
-      '~/': `${r('src')}/`,
-    },
+    alias: [
+      { find: '@oneweb/module-sdk/capability-client', replacement: r('./packages/module-sdk/src/capability-client.ts') },
+      { find: '@oneweb/module-sdk/capability-rpc', replacement: r('./packages/module-sdk/src/capability-rpc.ts') },
+      { find: '@oneweb/module-sdk/storage-module', replacement: r('./packages/module-sdk/src/storage-module.ts') },
+      { find: '@oneweb/module-sdk/runtime', replacement: r('./packages/module-sdk/src/runtime-client.ts') },
+      { find: '@oneweb/module-sdk', replacement: r('./packages/module-sdk/src/index.ts') },
+      { find: '~', replacement: r('./src') },
+    ],
   },
-  define: {
-    __DEV__: isDev,
-    __NAME__: JSON.stringify(packageJson.name),
-  },
-  plugins: [
-    Vue(),
-    AutoImport({
-      resolvers: [ElementPlusResolver()],
-      imports: [
-        'vue',
-        {
-          '~/platform/browser': [
-            ['default', 'browser'],
-          ],
-        },
-        {
-          '~/utils/logger': [
-            'log',
-          ],
-        },
-      ],
-      dts: r('src/auto-imports.d.ts'),
-    }),
-    Components({
-      dirs: [r('src/components')],
-      dts: r('src/components.d.ts'),
-      resolvers: [
-        ElementPlusResolver(),
-        IconsResolver({
-          prefix: '',
-        }),
-      ],
-    }),
-    ElementPlus.vite({}),
-    Icons(),
-    UnoCSS(),
-    {
-      name: 'assets-rewrite',
-      enforce: 'post',
-      apply: 'build',
-      transformIndexHtml(html, { path }) {
-        return html.replace(/"\/assets\//g, `"${relative(dirname(path), '/assets')}/`)
-      },
-    },
-  ],
+  define: { __DEV__: false, __FIREFOX__: false, __NAME__: JSON.stringify('one-web') },
   test: {
     globals: true,
     environment: 'jsdom',
-    include: ['**/*.{test,spec}.{ts,tsx,js,jsx,vue}'],
+    include: ['**/*.{test,spec}.{ts,tsx,js,jsx}'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary', 'html'],
       reportsDirectory: '../coverage',
-      exclude: [
-        ...coverageConfigDefaults.exclude,
-        '**/main.ts',
-        '**/*.d.ts',
-        'auto-imports.d.ts',
-        'components.d.ts',
-        'manifest.ts',
-      ],
-      thresholds: {
-        lines: 4,
-        functions: 30,
-        branches: 40,
-        statements: 4,
-      },
+      exclude: [...coverageConfigDefaults.exclude, '**/main.ts', '**/*.d.ts', 'manifest.ts', 'entrypoints/**'],
+      thresholds: { lines: 4, functions: 30, branches: 40, statements: 4 },
     },
   },
 })

@@ -51,7 +51,7 @@ it('saves user configuration through the real management protocol and clears cre
       handleDubbingMessage(
         controller,
         message,
-        { id: 'oneweb', url: 'chrome-extension://oneweb/dist/sidebar/index.html' },
+        { id: 'oneweb', url: 'chrome-extension://oneweb/sidebar.html' },
         'oneweb',
         'chrome-extension://oneweb/',
       ),
@@ -197,7 +197,7 @@ it('starts the same Bilibili video after a 45-second subtitle permission decisio
       return handleDubbingMessage(
         controller,
         message,
-        { id: 'oneweb', url: 'chrome-extension://oneweb/dist/sidebar/index.html' },
+        { id: 'oneweb', url: 'chrome-extension://oneweb/sidebar.html' },
         'oneweb',
         'chrome-extension://oneweb/',
       )

@@ -21,3 +21,6 @@ refrences/**
 coverage/
 __pycache__/
 .playwright-cli/
+.wxt/
+.output/
+.migration-backup/

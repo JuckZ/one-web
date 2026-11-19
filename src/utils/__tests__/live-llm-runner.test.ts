@@ -21,7 +21,7 @@ it('fails the live command when the browser test process is terminated by a sign
     await writeFile(path.join(artifact, 'manifest.json'), JSON.stringify({
       manifest_version: 3,
       background: { service_worker: 'worker.js' },
-      sandbox: { pages: ['dist/apps/sandbox.html'] },
+      sandbox: { pages: ['sandbox.html'] },
     }))
     const result = spawnSync(process.execPath, [path.join(root, 'node_modules/esno/esno.js'), path.join(root, 'scripts/test-live-llm.ts'), '--no-build'], {
       cwd: directory,

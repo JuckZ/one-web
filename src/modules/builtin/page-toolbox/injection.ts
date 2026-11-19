@@ -1,4 +1,4 @@
-export const PAGE_TOOLBOX_CONTENT_SCRIPT_FILE = '/dist/pageToolbox/index.global.js' as const
+export const PAGE_TOOLBOX_CONTENT_SCRIPT_FILE = '/page-toolbox.js' as const
 
 export interface PageToolboxScriptingApi {
   executeScript: (_injection: {

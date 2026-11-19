@@ -43,7 +43,7 @@ describe('chromium browser action entry', () => {
 
     expect(harness.runtime.getURL).toHaveBeenCalledWith(ONEWEB_FALLBACK_PAGE)
     expect(harness.tabs.create).toHaveBeenCalledWith({
-      url: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/dist/sidebar/index.html',
+      url: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/sidebar.html',
     })
   })
 

@@ -16,7 +16,7 @@ function setup(assistantTransport?: { sendMessage: (_message: unknown) => Promis
     set: async (items: Record<string, unknown>) => { Object.assign(data, structuredClone(items)) },
   }
   const controller = new SmartAppsController({ storage })
-  const client = new SmartAppsClient({ sendMessage: async message => handleSmartAppsMessage(controller, message, { id: 'fixture', url: `${extensionBase}dist/sidebar/index.html` }, 'fixture', extensionBase) })
+  const client = new SmartAppsClient({ sendMessage: async message => handleSmartAppsMessage(controller, message, { id: 'fixture', url: `${extensionBase}sidebar.html` }, 'fixture', extensionBase) })
   const root = document.createElement('section')
   document.body.replaceChildren(root)
   const view = new SmartAppsView(root, {
@@ -29,7 +29,7 @@ function setup(assistantTransport?: { sendMessage: (_message: unknown) => Promis
         : { token: captureFixture, title: 'Article', url: 'https://example.com/article', text: 'x'.repeat(40000), type: 'page', capturedAt: Date.now(), truncated: false } }
     } }),
     permissions: { request: async () => false },
-    sandboxUrl: `${extensionBase}dist/apps/sandbox.html`,
+    sandboxUrl: `${extensionBase}sandbox.html`,
     openModule: async () => {},
     setModuleEnabled: async () => {},
     settings: async () => {},

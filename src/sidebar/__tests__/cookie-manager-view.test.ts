@@ -52,7 +52,7 @@ it('requires explicit reading, hides values and reviews a selected deletion in t
     sendMessage: async message => handleCookieManagerMessage(
       controller,
       message,
-      { id: 'test', url: 'chrome-extension://test/dist/sidebar/index.html' },
+      { id: 'test', url: 'chrome-extension://test/sidebar.html' },
       'test',
       'chrome-extension://test/',
     ),
