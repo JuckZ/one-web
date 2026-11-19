@@ -90,3 +90,13 @@ Chromium 最终完整复验已通过，四项 ISC 的直接验证与独立 UI �
 本次仅在提交前更新 ISA 和本检查点的授权 / 评审状态；业务源码、测试与已验收制品不变。准备在提交后的 HEAD 对仓库根执行 `bun C:/Users/ajuck/.claude/LIFEOS/TOOLS/Review.ts C:/Users/ajuck/Projects/one-web --json`，默认基线为 `origin/main`；执行结果及确切 HEAD 另存于 `.git` 正式评审记录与 `artifacts/migration-handoff.md`，不使用任何豁免参数。
 
 factory 的 Windows `fcntl.flock` 缺口仍在；`wsl.exe --list --quiet` exit 1，本机未安装可用的 WSL。没有为补齐回执修改 factory、安装系统组件或推送触发 CI。正式 Review 与 factory / attest 分别报告；本次授权不包含 push、merge、deploy、商店上传或对外消息。
+
+### 正式评审结果
+
+迁移提交为 `1df6f937536f63838d75374ac5f0b5fd489364b3`（`refactor: migrate extension to WXT and React TanStack workspace`）。提交钩子的 lint-staged 通过；提交后核对冻结清单的全部 627 路径，钩子未改动文件字节，工作区干净。相对上次独立验收仅 ISA 和本检查点的授权元数据改变，绑定记录为 `.git/migration-committed-binding-1.json`。
+
+上述正式命令 exit 0：**pass**，base `34ce32b057da492c8f8e4addc0856d632c1eb4ca` → head `1df6f937536f63838d75374ac5f0b5fd489364b3`，scope `.`，dirty `false`。152 文件分为 4 批，high tier，由 `gpt-6.1-sol`（OpenAI）评审；findings 为空，无 dirty、blocker 或 round-cap 豁免。
+
+原始输出为 `.git/migration-formal-review-1.json`；可查看副本为 `artifacts/reviews/migration-formal-review-1/review.json`、`receipt.json`、`binding.json`。逐项核对了正式磁盘记录、当前 HEAD、base、完整 diff SHA-256 `9c4c4c0929b38614e85b17a57765f6883df56af2cfc9bb3e8771e825e6ccab40`、stateFingerprint 与 Assay receipt 的 pass / evaluator / 时间；`.git/migration-formal-review-1-verification.log` exit 0。提交后的 `IsaCheck.ts acceptance` 同样 exit 0。
+
+本节和 ISA 的评审结果是随后单独提交的文档增量，需在该最终提交上复评并另存回执；不改变生产源码、测试及既有制品。迁移提交与正式评审的授权目标已达成，factory / attest 仍是项目 `needs-input` 的唯一正式环境缺口。

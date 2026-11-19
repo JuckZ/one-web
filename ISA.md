@@ -68,10 +68,11 @@ updated: 2026-11-19
 
 baseline: 34ce32b057da492c8f8e4addc0856d632c1eb4ca
 acceptance: pass 2026-11-19 artifacts/acceptance/migration-review-1-final2/desktop-1440-assistant.png artifacts/acceptance/migration-review-1-final2/narrow-360-reading-settings-return.png artifacts/acceptance/migration-review-1-final2/narrow-420-tools.png — 独立真实扩展 UI，1440/360/420px，13张截图回读，19/19产物初末一致；范围与限制见 acceptance-result.json
-verification: 最新核心133文件995测试、typecheck、lint（0 errors/24 warnings）、Firefox完整gate、SDK、userscript6用例及双浏览器分发包校验通过；最终完整Chromium 86/86，retries 0，日志.git/migration-chromium-final-r1e.log；IsaCheck acceptance exit 0；factory在Windows不支持fcntl，未有成功attest；未提交HEAD，正式Review.ts未运行
-review: round 1 needs-input；R0-1至R0-5全部关闭，未确认新增源码阻断项；独立6文件36测试通过，UI与ZIP/XPI字节核对一致；repair-round: 1
-handoff: needs-input；评审与结果记录归档至.git/agent-factory/tasks/wxt-tanstack-latest.done-20261119T094239Z/；生产源码与测试保持冻结，最终文档元数据覆盖及摘要以review-1.md追加绑定为准；尚不标记ready-local
-next: 已获“提交代码并完成正式评审”授权；先提交已验收迁移，再在committed HEAD执行正式Review.ts并记录回执；factory check/attest仍缺POSIX环境；没有推送授权
+verification: 最新核心133文件995测试、typecheck、lint（0 errors/24 warnings）、Firefox完整gate、SDK、userscript6用例及双浏览器分发包校验通过；最终完整Chromium 86/86，retries 0，日志.git/migration-chromium-final-r1e.log；提交后IsaCheck acceptance exit 0；factory在Windows不支持fcntl，未有成功attest
+review: round 1源码复评关闭R0-1至R0-5，独立6文件36测试及UI与ZIP/XPI字节核对通过；repair-round: 1；正式Review.ts在迁移提交1df6f937536f63838d75374ac5f0b5fd489364b3上pass，覆盖152文件/4批，由gpt-6.1-sol评审，findings为空；无豁免
+formal-review: artifacts/reviews/migration-formal-review-1/review.json及receipt.json；base 34ce32b057da492c8f8e4addc0856d632c1eb4ca，head 1df6f937536f63838d75374ac5f0b5fd489364b3，scope .，dirty false；回执与diff散列及磁盘正式记录已逐项核验
+handoff: 迁移代码已提交并通过正式评审；项目总体验收仍为needs-input，仅factory check/attest缺POSIX执行环境；原评审归档.git/agent-factory/tasks/wxt-tanstack-latest.done-20261119T094239Z/保持不变；提交与正式评审续跑证据见artifacts/migration-handoff.md
+next: 在支持POSIX的环境为最终版本取得factory check/attest；本次评审结果文档单独提交后复评，不改生产源码、测试或制品；没有推送授权
 
 ### Repair round 1
 
