@@ -54,21 +54,28 @@ updated: 2026-11-19
 - [x] ISC-42: Windows 直接用当前 Python 运行 Factory 的 `doctor`、`check` 和 `attest`，覆盖核心、Chromium 和 Firefox。验收记录绑定实际输入与配置。Chromium 和 Firefox 开发服务可同时运行，工作区可加载并连接对应开发服务，开发缓存、产物与验收目录隔离。
 - [x] ISC-43: 原生 Windows 保留跨 worktree 验收互斥、失败继续报告及超时回收整棵进程树。原生程序仍按 argv 启动，批处理入口仅接受明确受限的参数。POSIX 路径沿用现有锁和进程组语义。
 
+### F13 · 补齐跨标签页验收与 Linux Firefox 门禁
+
+- [ ] ISC-44: Ubuntu CI 在 Firefox 扩展验证前安装锁定版本的 Playwright Firefox 与系统依赖，保留构建、manifest、音频与完整浏览器检查。使用实际的新提交 CI 结果验收。
+- [ ] ISC-45: 隔离 Chromium 配置文件首次选中两个未授权的合成站点时，原生允许后保留已选来源，原生拒绝后不添加该来源、不发送其正文。
+- [x] ISC-46: 通过明确授权的真实推理服务，在助手中比较两条合成网页事实并核对回答和来源编号；切换已配置模型后用相同任务验证新请求选择目标模型及返回内容。
+
 ## Test Strategy
 
-| Criterion | Kind   | Evidence                   | Expected | Probe                                                                                        | Assay tier |
-| --------- | ------ | -------------------------- | -------- | -------------------------------------------------------------------------------------------- | ---------- |
-| ISC-35    | bash   | 最新基线与业务回归         | exit 0   | git merge-base --is-ancestor 34ce32b HEAD && pnpm test                                       | literal    |
-| ISC-36    | bash   | WXT 双浏览器及资源         | exit 0   | pnpm build:chromium && pnpm build:firefox && pnpm pack:zip                                   | literal    |
-| ISC-37    | bash   | 路由、读取、列表与显式动作 | exit 0   | pnpm typecheck && pnpm test:e2e:strict                                                       | literal    |
-| ISC-38    | manual | 自动检查与真实界面验收     | pass     | pnpm verify；pnpm verify:module-sdk；pnpm verify:userscript；desktop/narrow browser captures | literal    |
-
-| ISC-39 | browser | 多页选择、移除、来源跳转、快捷提示词 | pass | e2e/workspace.spec.ts 的跨标签页问答场景 | literal |
-| ISC-40 | bash | 受信任协议、请求体、限额、存储不含来源正文 | exit 0 | `pnpm exec vitest run src/workspace/__tests__/tab-sources.test.ts` | literal |
-| ISC-41 | browser | 导航、撤权与原有单页操作回归 | pass | 跨标签页用例及 workspace 既有用例 | literal |
-
-| ISC-42 | manual | Windows 核心、双浏览器、证据回验 | pass | `factory.py doctor`、`check` 和 `attest` 分别运行三个配置，隔离加载两个开发包并核对产物散列 | literal |
-| ISC-43 | bash | 互斥、超时回收、argv 和证据拒绝 | exit 0 | `python -B -m unittest discover -s scripts/agent-factory/tests -v` | literal |
+| Criterion | Kind    | Evidence                                   | Expected | Probe                                                                                        | Assay tier |
+| --------- | ------- | ------------------------------------------ | -------- | -------------------------------------------------------------------------------------------- | ---------- |
+| ISC-35    | bash    | 最新基线与业务回归                         | exit 0   | git merge-base --is-ancestor 34ce32b HEAD && pnpm test                                       | literal    |
+| ISC-36    | bash    | WXT 双浏览器及资源                         | exit 0   | pnpm build:chromium && pnpm build:firefox && pnpm pack:zip                                   | literal    |
+| ISC-37    | bash    | 路由、读取、列表与显式动作                 | exit 0   | pnpm typecheck && pnpm test:e2e:strict                                                       | literal    |
+| ISC-38    | manual  | 自动检查与真实界面验收                     | pass     | pnpm verify；pnpm verify:module-sdk；pnpm verify:userscript；desktop/narrow browser captures | literal    |
+| ISC-39    | browser | 多页选择、移除、来源跳转、快捷提示词       | pass     | e2e/workspace.spec.ts 的跨标签页问答场景                                                     | literal    |
+| ISC-40    | bash    | 受信任协议、请求体、限额、存储不含来源正文 | exit 0   | `pnpm exec vitest run src/workspace/__tests__/tab-sources.test.ts`                           | literal    |
+| ISC-41    | browser | 导航、撤权与原有单页操作回归               | pass     | 跨标签页用例及 workspace 既有用例                                                            | literal    |
+| ISC-42    | manual  | Windows 核心、双浏览器、证据回验           | pass     | `factory.py doctor`、`check` 和 `attest` 分别运行三个配置，隔离加载两个开发包并核对产物散列  | literal    |
+| ISC-43    | bash    | 互斥、超时回收、argv 和证据拒绝            | exit 0   | `python -B -m unittest discover -s scripts/agent-factory/tests -v`                           | literal    |
+| ISC-44    | ci      | Ubuntu 对应提交的 CI 回执                  | pass     | 安装 Playwright Firefox 后运行原有 `pnpm run verify:firefox`                                 | literal    |
+| ISC-45    | manual  | 原生允许和拒绝及请求读回                   | pass     | 对两个合成站点执行首次授权，核对授权、来源数和实际请求正文                                   | literal    |
+| ISC-46    | manual  | 真实回答与切换模型请求                     | pass     | 使用两个合成网页和两个明确授权的模型，核对回答及请求模型 ID                                  | literal    |
 
 ## Decisions
 
@@ -90,8 +97,7 @@ acceptance: pass 2026-11-19 artifacts/acceptance/migration-review-1-final2/deskt
 verification: 最新核心133文件995测试、typecheck、lint（0 errors/24 warnings）、Firefox完整gate、SDK、userscript6用例及双浏览器分发包校验通过；最终完整Chromium 86/86，retries 0，日志.git/migration-chromium-final-r1e.log；提交后IsaCheck acceptance exit 0；factory在Windows不支持fcntl，未有成功attest
 review: round 1源码复评关闭R0-1至R0-5，独立6文件36测试及UI与ZIP/XPI字节核对通过；repair-round: 1；正式Review.ts在迁移提交1df6f937536f63838d75374ac5f0b5fd489364b3上pass，覆盖152文件/4批，由gpt-6.1-sol评审，findings为空；无豁免
 formal-review: artifacts/reviews/migration-formal-review-1/review.json及receipt.json；base 34ce32b057da492c8f8e4addc0856d632c1eb4ca，head 1df6f937536f63838d75374ac5f0b5fd489364b3，scope .，dirty false；回执与diff散列及磁盘正式记录已逐项核验
-handoff: 迁移代码已提交并通过正式评审；项目总体验收仍为needs-input，仅factory check/attest缺POSIX执行环境；原评审归档.git/agent-factory/tasks/wxt-tanstack-latest.done-20261119T094239Z/保持不变；提交与正式评审续跑证据见artifacts/migration-handoff.md
-next: 在支持POSIX的环境为最终版本取得factory check/attest；本次评审结果文档单独提交后复评，不改生产源码、测试或制品；没有推送授权
+handoff: 迁移代码已提交并通过正式评审。迁移交接时，Factory check/attest 受 Windows 的 POSIX 锁依赖阻塞。F12 在主线 `9fa2bb0` 补齐 Windows 原生门禁，核心与双浏览器回验均通过。原评审与交接证据见 `artifacts/migration-handoff.md`。
 
 ### Repair round 1
 
@@ -114,6 +120,12 @@ verification: F11 在未提交的基线 `2e9f5a8` 工作树验证。1,008 项单
 acceptance: pass 2026-11-19 Windows 11 双浏览器开发包工作区读回，见 `artifacts/assistant-platform-probe/dev-chromium-final.png` 和 `artifacts/assistant-platform-probe/dev-firefox-final.png`。Chromium 3303 连接 Vite 与 WXT，Firefox 自定义 3314 成功加载 `@vite/client` 和工作区。双目标开发重建前后生产与验收产物逐字一致。
 
 verification: Windows Python 3.12 原生 Factory 36 项回归通过。首次核心和双浏览器检查及回验通过，最终提交回执按对应 HEAD 留存于 Git common-dir 的 `agent-factory/runs/`，入口见 [代理开发指南](docs/agent-development/README.md#可直接运行的入口)。本轮未在 Linux/macOS 重新执行原生门禁。
+
+### F13 · 跨标签页验收补齐与 Firefox 门禁
+
+acceptance: pending 2026-11-20 ISC-46 已通过。ISC-44 等待修复版本的 Ubuntu CI，ISC-45 等待隔离 Chrome 原生弹窗的允许及拒绝结果。两项保持未勾选。
+
+verification: 基线 `9fa2bb0` 的 Windows 验证覆盖类型、lint（0 错误、24 条既有警告）、1,009 项单测、发布回归、Chromium 首轮 87/87 无重试及 Firefox 完整检查。评审后加强 Chromium 请求正文断言，工作台复验使用同一生产包。两次 CPU 推理请求的模型 ID、两页事实与引用均已核对。见 [F13 检查点](docs/checkpoints/assistant-tab-sources.md#f13--2026-11-20-复验)。
 
 ## Articulation Log
 

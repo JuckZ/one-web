@@ -420,7 +420,7 @@ it('keeps the draft sendable after the first conversation reply is lost in brows
   view.dispose()
 })
 
-it('does not send a draft while a selected tab is still being authorized', async () => {
+it('waits for tab authorization and only attaches the page after permission is granted', async () => {
   const requests = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify({ choices: [{ message: { content: 'Fixture answer' } }] }), { headers: { 'Content-Type': 'application/json' } }))
   const attachment = { tabId: 1, token: 'tab-source', title: '待授权的标签页', url: 'https://page.example/', truncated: false }
   const controller = new AssistantController({
@@ -436,10 +436,11 @@ it('does not send a draft while a selected tab is still being authorized', async
     url: 'chrome-extension://test/sidebar.html',
     documentId: 'ui',
   }, 'test', 'chrome-extension://test/') })
-  const tabSources = new TabSourceClient({ sendMessage: async (message: unknown) => {
+  const tabRequest = vi.fn(async (message: unknown) => {
     const command = (message as { command: string }).command
     return { channel: 'oneweb.tab-sources.v1', ok: true, value: command === 'list' ? [{ ...attachment, originPattern: 'https://page.example/*' }] : attachment }
-  } })
+  })
+  const tabSources = new TabSourceClient({ sendMessage: tabRequest })
   let grant!: (_allowed: boolean) => void
   const askPermission = vi.fn(() => new Promise<boolean>((resolve) => {
     grant = resolve
@@ -454,13 +455,25 @@ it('does not send a draft while a selected tab is still being authorized', async
   input.dispatchEvent(new Event('input'))
   ;[...root.querySelectorAll('button')].find(button => button.textContent?.includes('添加标签页'))!.click()
   await vi.waitFor(() => expect(root.querySelector('.assistant-picker-option')).not.toBeNull())
-  root.querySelector<HTMLButtonElement>('.assistant-picker-option')!.click()
-  expect(askPermission).toHaveBeenCalledOnce()
+  const choice = root.querySelector<HTMLButtonElement>('.assistant-picker-option')!
+  choice.click()
+  expect(askPermission).toHaveBeenCalledExactlyOnceWith({ origins: ['https://page.example/*'] })
   root.querySelector<HTMLButtonElement>('[data-testid="assistant-send"]')!.click()
   expect(root.querySelector('[data-testid="assistant-status"]')?.textContent).toContain('等待标签页')
   expect(requests).not.toHaveBeenCalled()
+  grant(false)
+  await vi.waitFor(() => expect(root.textContent).toContain('未获得此标签页的站点权限'))
+  expect(root.querySelector('[data-testid="assistant-tab-source-open"]')).toBeNull()
+  expect(tabRequest).not.toHaveBeenCalledWith(expect.objectContaining({ command: 'attach' }))
+  expect(requests).not.toHaveBeenCalled()
+  expect(input.value).toBe('Compare the selected source')
+
+  await vi.waitFor(() => expect(choice.disabled).toBe(false))
+  choice.click()
+  expect(askPermission).toHaveBeenCalledTimes(2)
   grant(true)
   await vi.waitFor(() => expect(root.textContent).toContain('标签页已附加'))
+  expect(tabRequest).toHaveBeenCalledWith(expect.objectContaining({ command: 'attach' }))
   input.value += ' /比较'
   input.setSelectionRange(input.value.length, input.value.length)
   input.dispatchEvent(new Event('input'))

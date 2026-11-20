@@ -83,6 +83,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Install Playwright Firefox
+        run: pnpm exec playwright install --with-deps firefox
+
       - name: Allow isolated default-port HTTP fixtures
         run: sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0
 

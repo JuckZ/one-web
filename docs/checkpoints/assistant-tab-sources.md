@@ -26,7 +26,7 @@
 - [360 px 标签页选择器](../../artifacts/test-results/assistant-f11-r3-visual/workspace-compares-explici-dc1cc-losed-after-a-source-reload/tab-picker-360.png)
 - [1440 px 双来源回答](../../artifacts/test-results/assistant-f11-r3-visual/workspace-compares-explici-dc1cc-losed-after-a-source-reload/tab-answer-1440.png)
 
-## 未覆盖
+## F11 首次验收的未覆盖项
 
 - 浏览器使用隔离的测试配置，覆盖扩展工作区，Chrome 原生侧栏容器和首次权限弹窗未验收。
 - 测试使用合成正文和本地模型替身。商业模型回答质量和多模型切换未验收。
@@ -44,3 +44,12 @@
 - Chrome 公开扩展入口可用工具栏 `action`、侧栏和快捷键。Ask Gemini 的浏览器私有顶栏位置不在公开 API 中。Firefox 原生侧栏由 manifest 声明，现有 `open-workspace` 快捷键打开完整工作区标签页。 [Chrome Side Panel](https://developer.chrome.com/docs/extensions/reference/api/sidePanel) · [Firefox Sidebar](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/sidebarAction)
 - `gemini-3.8-live` 通过独立 WebSocket 会话处理 PCM16LE 音频，原生输入 16 kHz，输出 24 kHz。现有文本助手使用 `chat/completions`。浏览器直连 Live 需要后端签发短期令牌。该协议可用本地服务替身验证建连、打断和关闭，真实服务与音频行为尚未实测。 [Live 音频协议](https://aistudio.google.com/docs/live-api/capabilities) · [短期令牌](https://aistudio.google.com/docs/live-api/ephemeral-tokens)
 - Google Connected Apps 的权限随 Gemini Apps 使用。OneWeb 若支持 Drive 导入，应单独授权用户选定文件并预览后附加。网页自动化沿用固定任务，用户选择来源或选区，并确认写回。账号联动和通用 Auto browse 本轮处于研究阶段。 [Connected Apps](https://support.google.com/gemini/answer/15229592) · [Drive OAuth 范围](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)
+
+## F13 · 2026-11-20 复验
+
+本轮基线为 `9fa2bb0372ce3358e0a5e38a2360a2a7911ee4b4`。该提交已有 Windows Factory 核心、Chromium 和 Firefox 的 `check` / `attest` 通过回执，关闭了 F11 首次验收时的 Windows 锁缺口。
+
+- ISC-44 的旧 Ubuntu 运行在构建与 manifest 检查后因缺少 Playwright Firefox 1543 退出。CI 已在 Firefox 验证前加入 `pnpm exec playwright install --with-deps firefox`。YAML 对照确认其余步骤一致。Windows 隔离缓存安装了 Playwright 1.63.0 固定的 Firefox 155.0，随后构建、manifest 校验和浏览器验收通过（助手 5/5、智能应用 2/2、内置模块 5/5）。新提交的 Ubuntu CI 回执待验证。 [旧 CI 运行](https://github.com/JuckZ/one-web/actions/runs/44669412633) · [Windows 日志](../../artifacts/f11-gap-verification/firefox-gate.log)
+- ISC-45 的授权适配层单测覆盖等待时阻止发送、拒绝后保留草稿且不调用正文附加、再次选择允许后才读取正文。Chromium 专项还通过了已授权来源的附加、重新加载后的拒发和移除。首授权限弹窗已在原生侧栏观察到，允许与拒绝按钮的结果仍待在隔离配置中读回。 [授权单测](../../artifacts/f11-gap-verification/assistant-unit-retry.log) · [Chromium 专项](../../artifacts/f11-gap-verification/chromium-switch.log)
+- ISC-46 在 Chromium 生产包上通过。Windows CPU 上的 llama.cpp b12556 分别加载 Qwen2.5-0.5B-Instruct 和 Qwen2.5-1.5B-Instruct。切换模型后新建对话并重新附加同样两页。两次请求均返回 HTTP 200，所选模型、请求模型 ID、流式响应模型 ID 与界面标签一致。两个回答均给出 Alder Hall 周一 `[1]`、Birch Hall 周四 `[2]`。验收使用合成网页，同题首轮的 SmolLM2-360M-Instruct 仅复述部分参考文本，未通过回答检查。 [请求与回答](../../artifacts/f11-gap-verification/local-model-results-qwen/local-model-both-local-mod-b6ab0-e-the-corresponding-sources/evidence.json) · [双模型复验](../../artifacts/f11-gap-verification/local-model-qwen.log) · [首轮记录](../../artifacts/f11-gap-verification/local-model-retry.log)
+- Windows 类型检查、全库 lint（0 错误、24 条既有警告）、1,009 项单测、发布回归、36 项 Factory 自测均通过。Chromium 首轮完整套件为 87/87。评审发现原跨页正文标记也出现在 URL，现将两者分开，并按编号直接断言三个请求的正文；此轮只改测试与文档，继续使用同一隔离生产包。 [Chromium 完整日志](../../artifacts/f11-gap-verification/chromium-suite.log) · [工作台复验](../../artifacts/f11-gap-verification/chromium-workspace-review-1.log) · [单测日志](../../artifacts/f11-gap-verification/unit-full.log) · [发布回归](../../artifacts/f11-gap-verification/release-regression.log)
